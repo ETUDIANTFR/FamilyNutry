@@ -659,7 +659,7 @@ function EmptyState({ onScan }: { onScan: () => void }) {
 }
 
 function SetupScreen() {
-  return <main className="setup-page"><div className="setup-card"><Brand /><span className="eyebrow">CONFIGURATION REQUISE</span><h1>Connectez votre espace partagé.</h1><p>Ajoutez l’URL de votre projet Supabase et sa clé publique anon dans un fichier <code>.env.local</code> à la racine du projet, puis redémarrez le site.</p><pre>VITE_SUPABASE_URL=https://votre-projet.supabase.co<br />VITE_SUPABASE_ANON_KEY=votre-cle-anon</pre><p>Les instructions complètes sont dans le fichier README du projet. Ne collez jamais une clé secrète Supabase dans le site.</p></div></main>
+  return <main className="setup-page"><div className="setup-card"><Brand /><span className="eyebrow">CONFIGURATION REQUISE</span><h1>Connectez votre espace partagé.</h1><p>En local, renseignez l’URL de votre projet Supabase et sa clé publique anon dans <code>.env.local</code>, puis redémarrez le serveur.</p><pre>{'VITE_SUPABASE_URL=https://votre-projet.supabase.co\nVITE_SUPABASE_ANON_KEY=votre-cle-publique'}</pre><p>Sur GitHub Pages, ajoutez ces valeurs comme secrets d’Actions nommés <code>VITE_SUPABASE_URL</code> et <code>VITE_SUPABASE_ANON_KEY</code>, puis relancez le déploiement. Ne mettez jamais une clé <code>service_role</code> dans le site.</p></div></main>
 }
 
 export default App
