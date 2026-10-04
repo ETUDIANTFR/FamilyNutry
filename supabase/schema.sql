@@ -50,6 +50,14 @@ create table public.calendar_events (
   check (ends_at > starts_at)
 );
 
+create table public.shopping_list_items (
+  id uuid primary key default gen_random_uuid(),
+  name text not null check (length(trim(name)) between 1 and 120),
+  is_checked boolean not null default false,
+  created_by uuid not null references public.profiles (id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -145,6 +153,7 @@ $$;
 
 revoke all on function public.revoke_member(uuid) from public;
 grant execute on function public.revoke_member(uuid) to authenticated;
+notify pgrst, 'reload schema';
 
 create or replace function public.set_product_updated_at()
 returns trigger
@@ -196,6 +205,7 @@ alter table public.profiles enable row level security;
 alter table public.products enable row level security;
 alter table public.meals enable row level security;
 alter table public.calendar_events enable row level security;
+alter table public.shopping_list_items enable row level security;
 
 create policy "Members can read their own profile and admins can read all"
   on public.profiles for select to authenticated
@@ -257,17 +267,36 @@ create policy "Approved members can remove shared calendar events"
   on public.calendar_events for delete to authenticated
   using ((select public.is_approved_member()));
 
+create policy "Approved members can read shared shopping items"
+  on public.shopping_list_items for select to authenticated
+  using ((select public.is_approved_member()));
+
+create policy "Approved members can add shared shopping items"
+  on public.shopping_list_items for insert to authenticated
+  with check ((select public.is_approved_member()) and created_by = (select auth.uid()));
+
+create policy "Approved members can update shared shopping items"
+  on public.shopping_list_items for update to authenticated
+  using ((select public.is_approved_member()))
+  with check ((select public.is_approved_member()));
+
+create policy "Approved members can remove shared shopping items"
+  on public.shopping_list_items for delete to authenticated
+  using ((select public.is_approved_member()));
+
 grant usage on schema public to authenticated;
 grant select, update on public.profiles to authenticated;
 grant select, insert, update, delete on public.products to authenticated;
 grant select, insert, update, delete on public.meals to authenticated;
 grant select, insert, update, delete on public.calendar_events to authenticated;
+grant select, insert, update, delete on public.shopping_list_items to authenticated;
 grant execute on function public.consume_product(uuid, numeric) to authenticated;
 
 alter publication supabase_realtime add table public.products;
 alter publication supabase_realtime add table public.profiles;
 alter publication supabase_realtime add table public.meals;
 alter publication supabase_realtime add table public.calendar_events;
+alter publication supabase_realtime add table public.shopping_list_items;
 
 create or replace function public.enforce_user_limit()
 returns trigger

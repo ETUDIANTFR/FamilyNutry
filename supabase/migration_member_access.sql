@@ -61,3 +61,4 @@ $$;
 
 revoke all on function public.revoke_member(uuid) from public;
 grant execute on function public.revoke_member(uuid) to authenticated;
+notify pgrst, 'reload schema';

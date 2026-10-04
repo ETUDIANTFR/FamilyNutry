@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { Html5Qrcode } from 'html5-qrcode'
 import type { ChangeEvent, FormEvent } from 'react'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
-import type { CalendarEvent, Meal, Product, Profile } from './lib/supabase'
+import type { CalendarEvent, Meal, Product, Profile, ShoppingListItem } from './lib/supabase'
 import type { CalendarEventMove } from './SharedCalendar'
 import './App.css'
 
@@ -19,7 +19,7 @@ type OffProduct = {
 
 type OffResponse = { status: number; product?: OffProduct }
 type Notice = { type: 'success' | 'error' | 'info'; text: string }
-type AppTab = 'products' | 'meals' | 'calendar' | 'members'
+type AppTab = 'products' | 'shopping' | 'meals' | 'calendar' | 'members'
 
 function toLocalDateTime(value: Date) {
   const date = new Date(value.getTime() - value.getTimezoneOffset() * 60_000)
@@ -72,6 +72,9 @@ function App() {
   const [sessionUser, setSessionUser] = useState<{ id: string; email?: string } | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [products, setProducts] = useState<Product[]>([])
+  const [shoppingItems, setShoppingItems] = useState<ShoppingListItem[]>([])
+  const [shoppingItemName, setShoppingItemName] = useState('')
+  const [addingShoppingItem, setAddingShoppingItem] = useState(false)
   const [meals, setMeals] = useState<Meal[]>([])
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([])
   const [pendingUsers, setPendingUsers] = useState<Profile[]>([])
@@ -142,6 +145,19 @@ function App() {
     return true
   }, [])
 
+  const loadShoppingItems = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('shopping_list_items')
+      .select('*')
+      .order('is_checked')
+      .order('created_at')
+    if (error) {
+      setNotice({ type: 'error', text: `Impossible de charger la liste de courses : ${error.message}` })
+      return
+    }
+    setShoppingItems(data ?? [])
+  }, [])
+
   const loadPendingUsers = useCallback(async () => {
     const { data, error } = await supabase.from('profiles').select('*').eq('status', 'pending').order('created_at')
     if (error) {
@@ -173,6 +189,7 @@ function App() {
     setProfile(data)
     if (data?.status === 'approved') {
       void loadProducts()
+      void loadShoppingItems()
       void loadMeals()
       void loadCalendarEvents()
       if (data.role === 'admin') {
@@ -180,7 +197,7 @@ function App() {
         void loadMemberUsers()
       }
     }
-  }, [loadProducts, loadMeals, loadCalendarEvents, loadPendingUsers, loadMemberUsers])
+  }, [loadProducts, loadShoppingItems, loadMeals, loadCalendarEvents, loadPendingUsers, loadMemberUsers])
 
   useEffect(() => {
     let active = true
@@ -202,6 +219,13 @@ function App() {
         const { data: productData, error: productsError } = await supabase.from('products').select('*').order('updated_at', { ascending: false })
         if (productsError) setNotice({ type: 'error', text: `Impossible de charger les produits : ${productsError.message}` })
         if (active) setProducts(productData ?? [])
+        const { data: shoppingData, error: shoppingError } = await supabase
+          .from('shopping_list_items')
+          .select('*')
+          .order('is_checked')
+          .order('created_at')
+        if (shoppingError) setNotice({ type: 'error', text: `Impossible de charger la liste de courses : ${shoppingError.message}` })
+        if (active) setShoppingItems(shoppingData ?? [])
         const { data: calendarData, error: calendarError } = await supabase
           .from('calendar_events')
           .select('*')
@@ -233,6 +257,7 @@ function App() {
       if (!user) {
         setProfile(null)
         setProducts([])
+        setShoppingItems([])
         setMeals([])
         setCalendarEvents([])
         setPendingUsers([])
@@ -259,6 +284,7 @@ function App() {
     const channel = supabase
       .channel('shared-products')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => void loadProducts())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shopping_list_items' }, () => void loadShoppingItems())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'meals' }, () => void loadMeals())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_events' }, () => void loadCalendarEvents())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => {
@@ -272,7 +298,7 @@ function App() {
     return () => {
       void supabase.removeChannel(channel)
     }
-  }, [loadProducts, loadMeals, loadCalendarEvents, loadPendingUsers, loadMemberUsers, loadProfile, profile, sessionUser])
+  }, [loadProducts, loadShoppingItems, loadMeals, loadCalendarEvents, loadPendingUsers, loadMemberUsers, loadProfile, profile, sessionUser])
 
   const lookupBarcode = useCallback(async (value: string) => {
     const code = value.trim().replace(/\s/g, '')
@@ -381,9 +407,18 @@ function App() {
   }
 
   async function approveUser(user: Profile) {
-    const { error } = await supabase.from('profiles').update({ status: 'approved' }).eq('id', user.id)
+    const { data, error } = await supabase
+      .from('profiles')
+      .update({ status: 'approved' })
+      .eq('id', user.id)
+      .select('id')
+      .maybeSingle()
     if (error) {
       setNotice({ type: 'error', text: `Approbation impossible : ${error.message}` })
+      return
+    }
+    if (!data) {
+      setNotice({ type: 'error', text: 'Approbation impossible : aucun profil correspondant n’a été mis à jour.' })
       return
     }
     setNotice({ type: 'success', text: `${user.full_name || user.email} peut maintenant accéder à la liste.` })
@@ -393,14 +428,81 @@ function App() {
   async function revokeUser(user: Profile) {
     if (user.role !== 'member' || user.id === sessionUser?.id) return
     setRevokingUserId(user.id)
-    const { error } = await supabase.rpc('revoke_member', { p_user_id: user.id })
+    const { data, error } = await supabase
+      .from('profiles')
+      .update({ status: 'revoked' })
+      .eq('id', user.id)
+      .eq('role', 'member')
+      .eq('status', 'approved')
+      .select('id')
+      .maybeSingle()
     if (error) {
       setNotice({ type: 'error', text: `Révocation impossible : ${error.message}` })
+    } else if (!data) {
+      setNotice({ type: 'error', text: 'Révocation impossible : aucun profil correspondant n’a été révoqué.' })
     } else {
       setNotice({ type: 'success', text: `L’accès de ${user.full_name || user.email} a été révoqué.` })
       await Promise.all([loadPendingUsers(), loadMemberUsers()])
     }
     setRevokingUserId(null)
+  }
+
+  async function addShoppingItem(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!sessionUser) return
+    const name = shoppingItemName.trim()
+    if (!name) return
+    setAddingShoppingItem(true)
+    const { error } = await supabase.from('shopping_list_items').insert({
+      name,
+      is_checked: false,
+      created_by: sessionUser.id,
+    })
+    if (error) {
+      setNotice({ type: 'error', text: `Ajout à la liste de courses impossible : ${error.message}` })
+    } else {
+      setShoppingItemName('')
+      setNotice({ type: 'success', text: `${name} a été ajouté à la liste de courses.` })
+      await loadShoppingItems()
+    }
+    setAddingShoppingItem(false)
+  }
+
+  async function toggleShoppingItem(item: ShoppingListItem) {
+    const isChecked = !item.is_checked
+    setShoppingItems((items) => items.map((current) => current.id === item.id
+      ? { ...current, is_checked: isChecked }
+      : current))
+    const { error } = await supabase
+      .from('shopping_list_items')
+      .update({ is_checked: isChecked })
+      .eq('id', item.id)
+    if (error) {
+      setNotice({ type: 'error', text: `Mise à jour de « ${item.name} » impossible : ${error.message}` })
+      await loadShoppingItems()
+      return
+    }
+    await loadShoppingItems()
+  }
+
+  async function deleteShoppingItem(item: ShoppingListItem) {
+    const { error } = await supabase.from('shopping_list_items').delete().eq('id', item.id)
+    if (error) {
+      setNotice({ type: 'error', text: `Suppression de « ${item.name} » impossible : ${error.message}` })
+      return
+    }
+    setNotice({ type: 'info', text: `${item.name} a été supprimé de la liste.` })
+    await loadShoppingItems()
+  }
+
+  async function clearCheckedShoppingItems() {
+    const { error } = await supabase.from('shopping_list_items').delete().eq('is_checked', true)
+    if (error) {
+      setNotice({ type: 'error', text: `Impossible de supprimer les articles cochés : ${error.message}` })
+      return
+    }
+    setNotice({ type: 'info', text: 'Les articles cochés ont été supprimés de la liste.' })
+    await loadShoppingItems()
   }
 
   async function lookupProduct(event: FormEvent<HTMLFormElement>) {
@@ -888,6 +990,7 @@ function App() {
         <div className="workspace-card"><div className="workspace-icon">⌂</div><div><strong>Ma liste commune</strong><span>{profile.role === 'admin' ? 'Administrateur' : 'Membre approuvé'}</span></div><span className="online-dot" /></div>
         <nav className="side-nav" aria-label="Navigation principale">
           <button className={`nav-item ${activeTab === 'products' ? 'active' : ''}`} onClick={() => setActiveTab('products')}><span className="nav-icon">▦</span>Ma liste<span className="nav-count">{products.length}</span></button>
+          <button className={`nav-item ${activeTab === 'shopping' ? 'active' : ''}`} onClick={() => setActiveTab('shopping')}><span className="nav-icon">✓</span>Courses<span className="nav-count">{shoppingItems.filter((item) => !item.is_checked).length}</span></button>
           <button className={`nav-item ${activeTab === 'meals' ? 'active' : ''}`} onClick={() => setActiveTab('meals')}><span className="nav-icon">◷</span>Repas<span className="nav-count">{meals.length}</span></button>
           <button className={`nav-item ${activeTab === 'calendar' ? 'active' : ''}`} onClick={() => setActiveTab('calendar')}><span className="nav-icon">▦</span>Calendrier<span className="nav-count">{calendarEvents.length}</span></button>
           {profile.role === 'admin' && <button className={`nav-item ${activeTab === 'members' ? 'active' : ''}`} onClick={() => setActiveTab('members')}><span className="nav-icon">♙</span>Membres{pendingUsers.length > 0 && <span className="nav-count nav-alert">{pendingUsers.length}</span>}</button>}
@@ -899,7 +1002,7 @@ function App() {
       </aside>
 
       <main className="main-content">
-        <header className="topbar"><div className="breadcrumb">Mon espace <span>/</span> <strong>{activeTab === 'products' ? 'Courses' : activeTab === 'meals' ? 'Repas' : activeTab === 'calendar' ? 'Calendrier' : 'Membres'}</strong></div><div className="topbar-right"><span className="sync-indicator"><i /> Espace partagé en direct</span><div className="topbar-avatar">{(profile.full_name || 'M').slice(0, 1).toUpperCase()}</div></div></header>
+        <header className="topbar"><div className="breadcrumb">Mon espace <span>/</span> <strong>{activeTab === 'products' ? 'Ma liste' : activeTab === 'shopping' ? 'Liste de courses' : activeTab === 'meals' ? 'Repas' : activeTab === 'calendar' ? 'Calendrier' : 'Membres'}</strong></div><div className="topbar-right"><span className="sync-indicator"><i /> Espace partagé en direct</span><div className="topbar-avatar">{(profile.full_name || 'M').slice(0, 1).toUpperCase()}</div></div></header>
         <div className="content-wrap">
           <NoticeView notice={notice} />
           {activeTab === 'products' ? (
@@ -921,6 +1024,73 @@ function App() {
                 <div className="source-note"><span>ⓘ</span> Notes nutritionnelles fournies par <a href="https://world.openfoodfacts.org/" target="_blank" rel="noreferrer">Open Food Facts</a>. Le Nutri-Score ne remplace pas un avis médical.</div>
               </section>
             </>
+          ) : activeTab === 'shopping' ? (
+            <section className="shopping-section">
+              <div className="page-heading">
+                <div>
+                  <span className="eyebrow">LISTE PARTAGÉE</span>
+                  <h1>Liste de courses<span className="heading-period">.</span></h1>
+                  <p>Ajoutez les achats à prévoir et cochez-les au fur et à mesure.</p>
+                </div>
+              </div>
+              <form className="shopping-add-form" onSubmit={(event) => void addShoppingItem(event)}>
+                <label className="visually-hidden" htmlFor="shopping-item-name">Article à ajouter</label>
+                <input
+                  id="shopping-item-name"
+                  value={shoppingItemName}
+                  onChange={(event) => setShoppingItemName(event.target.value)}
+                  placeholder="Ex. lait, pommes, pain…"
+                  maxLength={120}
+                  required
+                />
+                <button className="button button-primary" type="submit" disabled={addingShoppingItem || !shoppingItemName.trim()}>
+                  {addingShoppingItem ? 'Ajout…' : '＋ Ajouter'}
+                </button>
+              </form>
+              <div className="shopping-list-panel">
+                <div className="shopping-list-heading">
+                  <div>
+                    <h2>À acheter <span className="subtle-count">{shoppingItems.filter((item) => !item.is_checked).length}</span></h2>
+                    <p>La liste est partagée avec tous les membres.</p>
+                  </div>
+                  {shoppingItems.some((item) => item.is_checked) && (
+                    <button className="text-button" type="button" onClick={() => void clearCheckedShoppingItems()}>
+                      Effacer les articles cochés
+                    </button>
+                  )}
+                </div>
+                {shoppingItems.length === 0 ? (
+                  <div className="no-pending">
+                    <span>✓</span>
+                    <strong>La liste est vide.</strong>
+                    <p>Ajoutez les articles à acheter ci-dessus.</p>
+                  </div>
+                ) : (
+                  <ul className="shopping-items">
+                    {shoppingItems.map((item) => (
+                      <li className={`shopping-item ${item.is_checked ? 'checked' : ''}`} key={item.id}>
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={item.is_checked}
+                            onChange={() => void toggleShoppingItem(item)}
+                            aria-label={`${item.is_checked ? 'Décocher' : 'Cocher'} ${item.name}`}
+                          />
+                          <span>{item.name}</span>
+                        </label>
+                        <button
+                          className="shopping-delete"
+                          type="button"
+                          title={`Supprimer ${item.name}`}
+                          aria-label={`Supprimer ${item.name}`}
+                          onClick={() => void deleteShoppingItem(item)}
+                        >×</button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </section>
           ) : activeTab === 'meals' ? (
             <section className="meals-section">
               <div className="page-heading"><div><span className="eyebrow">PLANIFICATION PARTAGÉE</span><h1>Les repas<span className="heading-period">.</span></h1><p>Organisez les repas à venir avec votre groupe.</p></div></div>

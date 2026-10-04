@@ -49,6 +49,14 @@ export type CalendarEvent = {
   created_at: string
 }
 
+export type ShoppingListItem = {
+  id: string
+  name: string
+  is_checked: boolean
+  created_by: string
+  created_at: string
+}
+
 type Table<Row, Insert, Update = Partial<Insert>> = {
   Row: Row
   Insert: Insert
@@ -63,15 +71,12 @@ type Database = {
       products: Table<Product, Omit<Product, 'id' | 'created_at' | 'updated_at'> & Partial<Pick<Product, 'id' | 'created_at' | 'updated_at'>>>
       meals: Table<Meal, Omit<Meal, 'id' | 'created_at'> & Partial<Pick<Meal, 'id' | 'created_at'>>>
       calendar_events: Table<CalendarEvent, Omit<CalendarEvent, 'id' | 'created_at'> & Partial<Pick<CalendarEvent, 'id' | 'created_at'>>>
+      shopping_list_items: Table<ShoppingListItem, Omit<ShoppingListItem, 'id' | 'created_at'> & Partial<Pick<ShoppingListItem, 'id' | 'created_at'>>>
     }
     Views: Record<string, never>
     Functions: {
       consume_product: {
         Args: { p_product_id: string; p_amount: number }
-        Returns: undefined
-      }
-      revoke_member: {
-        Args: { p_user_id: string }
         Returns: undefined
       }
     }
