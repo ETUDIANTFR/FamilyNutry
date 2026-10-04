@@ -38,6 +38,17 @@ export type Meal = {
   created_at: string
 }
 
+export type CalendarEvent = {
+  id: string
+  title: string
+  description: string | null
+  starts_at: string
+  ends_at: string
+  all_day: boolean
+  created_by: string
+  created_at: string
+}
+
 type Table<Row, Insert, Update = Partial<Insert>> = {
   Row: Row
   Insert: Insert
@@ -51,6 +62,7 @@ type Database = {
       profiles: Table<Profile, Pick<Profile, 'id' | 'email' | 'full_name'> & Partial<Pick<Profile, 'status' | 'role' | 'created_at' | 'last_sign_in_at'>>>
       products: Table<Product, Omit<Product, 'id' | 'created_at' | 'updated_at'> & Partial<Pick<Product, 'id' | 'created_at' | 'updated_at'>>>
       meals: Table<Meal, Omit<Meal, 'id' | 'created_at'> & Partial<Pick<Meal, 'id' | 'created_at'>>>
+      calendar_events: Table<CalendarEvent, Omit<CalendarEvent, 'id' | 'created_at'> & Partial<Pick<CalendarEvent, 'id' | 'created_at'>>>
     }
     Views: Record<string, never>
     Functions: {

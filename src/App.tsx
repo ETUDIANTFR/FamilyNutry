@@ -1,12 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import FullCalendar from '@fullcalendar/react'
-import dayGridPlugin from '@fullcalendar/daygrid'
-import interactionPlugin from '@fullcalendar/interaction'
-import frLocale from '@fullcalendar/core/locales/fr'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { Html5Qrcode } from 'html5-qrcode'
-import type { FormEvent } from 'react'
+import type { ChangeEvent, FormEvent } from 'react'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
-import type { Meal, Product, Profile } from './lib/supabase'
+import type { CalendarEvent, Meal, Product, Profile } from './lib/supabase'
+import type { CalendarEventMove } from './SharedCalendar'
 import './App.css'
 
 type OffProduct = {
@@ -22,6 +19,44 @@ type OffProduct = {
 
 type OffResponse = { status: number; product?: OffProduct }
 type Notice = { type: 'success' | 'error' | 'info'; text: string }
+type AppTab = 'products' | 'meals' | 'calendar' | 'members'
+
+function toLocalDateTime(value: Date) {
+  const date = new Date(value.getTime() - value.getTimezoneOffset() * 60_000)
+  return date.toISOString().slice(0, 16)
+}
+
+function addDaysToDate(value: string, days: number) {
+  const date = new Date(`${value}T00:00:00.000Z`)
+  date.setUTCDate(date.getUTCDate() + days)
+  return date.toISOString().slice(0, 10)
+}
+
+function escapeIcsText(value: string) {
+  return value.replace(/\\/g, '\\\\').replace(/\r?\n/g, '\\n').replace(/,/g, '\\,').replace(/;/g, '\\;')
+}
+
+function foldIcsLine(value: string) {
+  const encoder = new TextEncoder()
+  let output = ''
+  let line = ''
+  let lineBytes = 0
+  for (const character of value) {
+    const characterBytes = encoder.encode(character).length
+    if (lineBytes + characterBytes > 75) {
+      output += `${line}\r\n `
+      line = ''
+      lineBytes = 1
+    }
+    line += character
+    lineBytes += characterBytes
+  }
+  return output + line
+}
+
+function icsDateTime(value: string) {
+  return new Date(value).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
+}
 
 const gradeLabels: Record<string, string> = {
   a: 'Excellent',
@@ -31,11 +66,14 @@ const gradeLabels: Record<string, string> = {
   e: 'À limiter',
 }
 
+const SharedCalendar = lazy(() => import('./SharedCalendar'))
+
 function App() {
   const [sessionUser, setSessionUser] = useState<{ id: string; email?: string } | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [products, setProducts] = useState<Product[]>([])
   const [meals, setMeals] = useState<Meal[]>([])
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([])
   const [pendingUsers, setPendingUsers] = useState<Profile[]>([])
   const [memberUsers, setMemberUsers] = useState<Profile[]>([])
   const [revokingUserId, setRevokingUserId] = useState<string | null>(null)
@@ -53,7 +91,7 @@ function App() {
   const [lookupBusy, setLookupBusy] = useState(false)
   const [foundProduct, setFoundProduct] = useState<{ barcode: string; data: OffProduct } | null>(null)
   const [savingProduct, setSavingProduct] = useState(false)
-  const [activeTab, setActiveTab] = useState<'products' | 'meals' | 'members'>('products')
+  const [activeTab, setActiveTab] = useState<AppTab>('products')
   const [selectedProducts, setSelectedProducts] = useState<Record<string, number>>({})
   const [manualName, setManualName] = useState('')
   const [manualAmount, setManualAmount] = useState('1')
@@ -66,8 +104,16 @@ function App() {
   const [mealDate, setMealDate] = useState('')
   const [mealNotes, setMealNotes] = useState('')
   const [savingMeal, setSavingMeal] = useState(false)
-  const [showMealCalendar, setShowMealCalendar] = useState(false)
-  const mealNameInput = useRef<HTMLInputElement>(null)
+  const calendarFileInput = useRef<HTMLInputElement>(null)
+  const [eventModalOpen, setEventModalOpen] = useState(false)
+  const [editingEventId, setEditingEventId] = useState<string | null>(null)
+  const [calendarEventTitle, setCalendarEventTitle] = useState('')
+  const [calendarEventDescription, setCalendarEventDescription] = useState('')
+  const [calendarEventStart, setCalendarEventStart] = useState('')
+  const [calendarEventEnd, setCalendarEventEnd] = useState('')
+  const [calendarEventAllDay, setCalendarEventAllDay] = useState(false)
+  const [savingCalendarEvent, setSavingCalendarEvent] = useState(false)
+  const [importingCalendar, setImportingCalendar] = useState(false)
   const loadProducts = useCallback(async () => {
     const { data, error } = await supabase.from('products').select('*').order('updated_at', { ascending: false })
     if (error) {
@@ -84,6 +130,16 @@ function App() {
       return
     }
     setMeals(data ?? [])
+  }, [])
+
+  const loadCalendarEvents = useCallback(async () => {
+    const { data, error } = await supabase.from('calendar_events').select('*').order('starts_at')
+    if (error) {
+      setNotice({ type: 'error', text: `Impossible de charger le calendrier : ${error.message}` })
+      return false
+    }
+    setCalendarEvents(data ?? [])
+    return true
   }, [])
 
   const loadPendingUsers = useCallback(async () => {
@@ -118,12 +174,13 @@ function App() {
     if (data?.status === 'approved') {
       void loadProducts()
       void loadMeals()
+      void loadCalendarEvents()
       if (data.role === 'admin') {
         void loadPendingUsers()
         void loadMemberUsers()
       }
     }
-  }, [loadProducts, loadMeals, loadPendingUsers, loadMemberUsers])
+  }, [loadProducts, loadMeals, loadCalendarEvents, loadPendingUsers, loadMemberUsers])
 
   useEffect(() => {
     let active = true
@@ -145,6 +202,12 @@ function App() {
         const { data: productData, error: productsError } = await supabase.from('products').select('*').order('updated_at', { ascending: false })
         if (productsError) setNotice({ type: 'error', text: `Impossible de charger les produits : ${productsError.message}` })
         if (active) setProducts(productData ?? [])
+        const { data: calendarData, error: calendarError } = await supabase
+          .from('calendar_events')
+          .select('*')
+          .order('starts_at')
+        if (calendarError) setNotice({ type: 'error', text: `Impossible de charger le calendrier : ${calendarError.message}` })
+        if (active) setCalendarEvents(calendarData ?? [])
         if (profileData.role === 'admin') {
           const { data: pendingData, error: pendingError } = await supabase.from('profiles').select('*').eq('status', 'pending').order('created_at')
           if (pendingError) setNotice({ type: 'error', text: `Impossible de charger les demandes : ${pendingError.message}` })
@@ -171,6 +234,7 @@ function App() {
         setProfile(null)
         setProducts([])
         setMeals([])
+        setCalendarEvents([])
         setPendingUsers([])
         setMemberUsers([])
         setLoading(false)
@@ -196,6 +260,7 @@ function App() {
       .channel('shared-products')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => void loadProducts())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'meals' }, () => void loadMeals())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_events' }, () => void loadCalendarEvents())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => {
         if (profile.role === 'admin') {
           void loadPendingUsers()
@@ -207,7 +272,7 @@ function App() {
     return () => {
       void supabase.removeChannel(channel)
     }
-  }, [loadProducts, loadMeals, loadPendingUsers, loadMemberUsers, loadProfile, profile, sessionUser])
+  }, [loadProducts, loadMeals, loadCalendarEvents, loadPendingUsers, loadMemberUsers, loadProfile, profile, sessionUser])
 
   const lookupBarcode = useCallback(async (value: string) => {
     const code = value.trim().replace(/\s/g, '')
@@ -518,6 +583,228 @@ function App() {
     }
   }
 
+  function openCalendarEvent(date?: Date, allDay = false) {
+    const start = date ?? new Date()
+    const startValue = toLocalDateTime(start)
+    const end = new Date(start.getTime() + 60 * 60 * 1000)
+    setEditingEventId(null)
+    setCalendarEventTitle('')
+    setCalendarEventDescription('')
+    setCalendarEventStart(startValue)
+    setCalendarEventEnd(toLocalDateTime(end))
+    setCalendarEventAllDay(allDay)
+    setEventModalOpen(true)
+  }
+
+  function editCalendarEvent(event: CalendarEvent) {
+    const start = new Date(event.starts_at)
+    const end = new Date(event.ends_at)
+    setEditingEventId(event.id)
+    setCalendarEventTitle(event.title)
+    setCalendarEventDescription(event.description ?? '')
+    setCalendarEventStart(event.all_day ? `${event.starts_at.slice(0, 10)}T09:00` : toLocalDateTime(start))
+    setCalendarEventEnd(event.all_day
+      ? `${addDaysToDate(event.ends_at.slice(0, 10), -1)}T10:00`
+      : toLocalDateTime(end))
+    setCalendarEventAllDay(event.all_day)
+    setEventModalOpen(true)
+  }
+
+  async function saveCalendarEvent(formEvent: FormEvent<HTMLFormElement>) {
+    formEvent.preventDefault()
+    if (!sessionUser) return
+    const startValue = calendarEventStart.slice(0, 16)
+    const endValue = calendarEventEnd.slice(0, 16)
+    const startDate = new Date(startValue)
+    const endDate = new Date(endValue)
+    if (!calendarEventTitle.trim() || Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+      setNotice({ type: 'error', text: 'Vérifiez le titre et les dates de l’événement.' })
+      return
+    }
+
+    let startsAt: string
+    let endsAt: string
+    if (calendarEventAllDay) {
+      const firstDay = startValue.slice(0, 10)
+      const lastDay = endValue.slice(0, 10)
+      if (lastDay < firstDay) {
+        setNotice({ type: 'error', text: 'La date de fin doit être égale ou postérieure à la date de début.' })
+        return
+      }
+      startsAt = `${firstDay}T00:00:00.000Z`
+      endsAt = `${addDaysToDate(lastDay, 1)}T00:00:00.000Z`
+    } else {
+      if (endDate <= startDate) {
+        setNotice({ type: 'error', text: 'L’heure de fin doit être postérieure à l’heure de début.' })
+        return
+      }
+      startsAt = startDate.toISOString()
+      endsAt = endDate.toISOString()
+    }
+
+    setSavingCalendarEvent(true)
+    const values = {
+      title: calendarEventTitle.trim(),
+      description: calendarEventDescription.trim() || null,
+      starts_at: startsAt,
+      ends_at: endsAt,
+      all_day: calendarEventAllDay,
+    }
+    const result = editingEventId
+      ? await supabase.from('calendar_events').update(values).eq('id', editingEventId)
+      : await supabase.from('calendar_events').insert({ ...values, created_by: sessionUser.id })
+    if (result.error) {
+      setNotice({ type: 'error', text: `Enregistrement de l’événement impossible : ${result.error.message}` })
+    } else {
+      setEventModalOpen(false)
+      if (await loadCalendarEvents()) {
+        setNotice({ type: 'success', text: editingEventId ? 'Événement modifié.' : 'Événement ajouté au calendrier.' })
+      }
+    }
+    setSavingCalendarEvent(false)
+  }
+
+  async function deleteCalendarEvent() {
+    if (!editingEventId) return
+    const { error } = await supabase.from('calendar_events').delete().eq('id', editingEventId)
+    if (error) {
+      setNotice({ type: 'error', text: `Suppression de l’événement impossible : ${error.message}` })
+    } else {
+      setEventModalOpen(false)
+      if (await loadCalendarEvents()) setNotice({ type: 'info', text: 'Événement supprimé du calendrier.' })
+    }
+  }
+
+  async function moveCalendarEvent(event: CalendarEventMove, revert: () => void) {
+    if (!event.start) {
+      revert()
+      return
+    }
+    const startsAt = event.allDay
+      ? `${toLocalDateTime(event.start).slice(0, 10)}T00:00:00.000Z`
+      : event.start.toISOString()
+    const endDate = event.end ?? new Date(event.start.getTime() + (event.allDay ? 86_400_000 : 3_600_000))
+    const endsAt = event.allDay
+      ? `${toLocalDateTime(endDate).slice(0, 10)}T00:00:00.000Z`
+      : endDate.toISOString()
+    const { error } = await supabase.from('calendar_events').update({
+      starts_at: startsAt,
+      ends_at: endsAt,
+      all_day: event.allDay,
+    }).eq('id', event.id)
+    if (error) {
+      revert()
+      setNotice({ type: 'error', text: `Déplacement de l’événement impossible : ${error.message}` })
+      return
+    }
+    await loadCalendarEvents()
+  }
+
+  function exportCalendar() {
+    const lines = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//NutriScan//Calendrier//FR',
+      'CALSCALE:GREGORIAN',
+      ...calendarEvents.flatMap((event) => [
+        'BEGIN:VEVENT',
+        `UID:${event.id}@nutriscan`,
+        `DTSTAMP:${icsDateTime(event.created_at)}`,
+        event.all_day
+          ? `DTSTART;VALUE=DATE:${event.starts_at.slice(0, 10).replace(/-/g, '')}`
+          : `DTSTART:${icsDateTime(event.starts_at)}`,
+        event.all_day
+          ? `DTEND;VALUE=DATE:${event.ends_at.slice(0, 10).replace(/-/g, '')}`
+          : `DTEND:${icsDateTime(event.ends_at)}`,
+        `SUMMARY:${escapeIcsText(event.title)}`,
+        ...(event.description ? [`DESCRIPTION:${escapeIcsText(event.description)}`] : []),
+        'END:VEVENT',
+      ]),
+      'END:VCALENDAR',
+    ]
+    const content = `${lines.map(foldIcsLine).join('\r\n')}\r\n`
+    const url = URL.createObjectURL(new Blob([content], { type: 'text/calendar;charset=utf-8' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'nutriscan-calendrier.ics'
+    link.click()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    setNotice({ type: 'success', text: `${calendarEvents.length} événement(s) exporté(s) au format iCalendar.` })
+  }
+
+  async function importCalendarFile(formEvent: ChangeEvent<HTMLInputElement>) {
+    const file = formEvent.currentTarget.files?.[0]
+    formEvent.currentTarget.value = ''
+    if (!file) return
+    if (file.size > 10 * 1024 * 1024) {
+      setNotice({ type: 'error', text: 'Le fichier .ics dépasse la taille maximale de 10 Mo.' })
+      return
+    }
+    if (!sessionUser) return
+
+    setImportingCalendar(true)
+    try {
+      const { default: ICAL } = await import('ical.js')
+      const parsed = ICAL.parse(await file.text())
+      const calendar = new ICAL.Component(parsed)
+      const components = calendar.getAllSubcomponents('vevent')
+      if (components.length > 500) throw new Error('Le fichier contient plus de 500 événements.')
+      let skippedRecurring = 0
+      const imported: Array<Omit<CalendarEvent, 'id' | 'created_at'>> = []
+      for (const component of components) {
+        if (component.getFirstProperty('rrule') || component.getFirstProperty('recurrence-id')) {
+          skippedRecurring += 1
+          continue
+        }
+        const event = new ICAL.Event(component)
+        const start = event.startDate
+        if (!start) continue
+        const allDay = start.isDate
+        const defaultEnd = start.clone()
+        defaultEnd.addDuration(ICAL.Duration.fromSeconds(allDay ? 86_400 : 3_600))
+        const hasExplicitEnd = component.getFirstProperty('dtend') || component.getFirstProperty('duration')
+        const end = hasExplicitEnd ? event.endDate : defaultEnd
+        const toStoredDate = (value: typeof start) => value.isDate
+          ? `${value.toString()}T00:00:00.000Z`
+          : value.toJSDate().toISOString()
+        const startsAt = toStoredDate(start)
+        const endsAt = toStoredDate(end)
+        if (new Date(endsAt) <= new Date(startsAt)) continue
+        imported.push({
+          title: event.summary?.trim() || 'Événement sans titre',
+          description: event.description?.trim() || null,
+          starts_at: startsAt,
+          ends_at: endsAt,
+          all_day: allDay,
+          created_by: sessionUser.id,
+        })
+      }
+      if (imported.length === 0) {
+        setNotice({
+          type: skippedRecurring ? 'info' : 'error',
+          text: skippedRecurring
+            ? `Aucun événement importable : ${skippedRecurring} événement(s) récurrent(s) ne sont pas pris en charge.`
+            : 'Aucun événement valide trouvé dans ce fichier .ics.',
+        })
+      } else {
+        const { error } = await supabase.from('calendar_events').insert(imported)
+        if (error) throw new Error(error.message)
+        if (!await loadCalendarEvents()) return
+        setNotice({
+          type: skippedRecurring ? 'info' : 'success',
+          text: `${imported.length} événement(s) importé(s)${skippedRecurring ? ` ; ${skippedRecurring} récurrent(s) ignoré(s)` : ''}.`,
+        })
+      }
+    } catch (error) {
+      setNotice({
+        type: 'error',
+        text: `Import iCalendar impossible : ${error instanceof Error ? error.message : 'fichier invalide.'}`,
+      })
+    } finally {
+      setImportingCalendar(false)
+    }
+  }
+
   function openScanner() {
     setNotice(null)
     setScannerOpen(true)
@@ -602,6 +889,7 @@ function App() {
         <nav className="side-nav" aria-label="Navigation principale">
           <button className={`nav-item ${activeTab === 'products' ? 'active' : ''}`} onClick={() => setActiveTab('products')}><span className="nav-icon">▦</span>Ma liste<span className="nav-count">{products.length}</span></button>
           <button className={`nav-item ${activeTab === 'meals' ? 'active' : ''}`} onClick={() => setActiveTab('meals')}><span className="nav-icon">◷</span>Repas<span className="nav-count">{meals.length}</span></button>
+          <button className={`nav-item ${activeTab === 'calendar' ? 'active' : ''}`} onClick={() => setActiveTab('calendar')}><span className="nav-icon">▦</span>Calendrier<span className="nav-count">{calendarEvents.length}</span></button>
           {profile.role === 'admin' && <button className={`nav-item ${activeTab === 'members' ? 'active' : ''}`} onClick={() => setActiveTab('members')}><span className="nav-icon">♙</span>Membres{pendingUsers.length > 0 && <span className="nav-count nav-alert">{pendingUsers.length}</span>}</button>}
         </nav>
         <div className="sidebar-bottom">
@@ -611,7 +899,7 @@ function App() {
       </aside>
 
       <main className="main-content">
-        <header className="topbar"><div className="breadcrumb">Mon espace <span>/</span> <strong>{activeTab === 'products' ? 'Courses' : activeTab === 'meals' ? 'Repas' : 'Membres'}</strong></div><div className="topbar-right"><span className="sync-indicator"><i /> Espace partagé en direct</span><div className="topbar-avatar">{(profile.full_name || 'M').slice(0, 1).toUpperCase()}</div></div></header>
+        <header className="topbar"><div className="breadcrumb">Mon espace <span>/</span> <strong>{activeTab === 'products' ? 'Courses' : activeTab === 'meals' ? 'Repas' : activeTab === 'calendar' ? 'Calendrier' : 'Membres'}</strong></div><div className="topbar-right"><span className="sync-indicator"><i /> Espace partagé en direct</span><div className="topbar-avatar">{(profile.full_name || 'M').slice(0, 1).toUpperCase()}</div></div></header>
         <div className="content-wrap">
           <NoticeView notice={notice} />
           {activeTab === 'products' ? (
@@ -635,61 +923,63 @@ function App() {
             </>
           ) : activeTab === 'meals' ? (
             <section className="meals-section">
-              <div className="page-heading">
-                <div><span className="eyebrow">PLANIFICATION PARTAGÉE</span><h1>Les repas<span className="heading-period">.</span></h1><p>Organisez les repas à venir avec votre groupe.</p></div>
-                <div className="heading-actions">
-                  <button
-                    className={`button ${showMealCalendar ? 'button-primary' : 'button-secondary'}`}
-                    type="button"
-                    aria-pressed={showMealCalendar}
-                    onClick={() => setShowMealCalendar((visible) => !visible)}
-                  >{showMealCalendar ? '☷ Liste' : '▦ Calendrier'}</button>
-                </div>
-              </div>
+              <div className="page-heading"><div><span className="eyebrow">PLANIFICATION PARTAGÉE</span><h1>Les repas<span className="heading-period">.</span></h1><p>Organisez les repas à venir avec votre groupe.</p></div></div>
               <form className="meal-form" onSubmit={(event) => void addMeal(event)}>
-                <label>Nom du repas<input ref={mealNameInput} value={mealName} onChange={(event) => setMealName(event.target.value)} placeholder="Ex. soupe de légumes" required maxLength={120} /></label>
+                <label>Nom du repas<input value={mealName} onChange={(event) => setMealName(event.target.value)} placeholder="Ex. soupe de légumes" required maxLength={120} /></label>
                 <label>Date prévue<input type="date" value={mealDate} onChange={(event) => setMealDate(event.target.value)} /></label>
                 <label className="meal-notes">Notes<textarea value={mealNotes} onChange={(event) => setMealNotes(event.target.value)} placeholder="Idées, préparation…" maxLength={500} /></label>
                 <button className="button button-primary" disabled={savingMeal}>{savingMeal ? 'Ajout…' : 'Ajouter au planning'}</button>
               </form>
-              {showMealCalendar ? (
-                <div className="meal-calendar">
-                  <FullCalendar
-                    plugins={[dayGridPlugin, interactionPlugin]}
-                    initialView="dayGridMonth"
-                    locale={frLocale}
-                    firstDay={1}
-                    height="auto"
-                    fixedWeekCount={false}
-                    dayMaxEvents
-                    headerToolbar={{ start: 'title', center: '', end: 'today prev,next' }}
-                    buttonText={{ today: 'Aujourd’hui' }}
-                    events={meals.flatMap((meal) => meal.planned_for ? [{
-                      id: meal.id,
-                      title: meal.name,
-                      start: meal.planned_for,
-                      allDay: true,
-                      extendedProps: { notes: meal.notes },
-                    }] : [])}
-                    dateClick={(info) => {
-                      setMealDate(info.dateStr)
-                      setNotice({ type: 'info', text: `Date sélectionnée : ${new Date(`${info.dateStr}T12:00:00`).toLocaleDateString('fr-FR')}. Ajoutez le nom du repas dans le formulaire.` })
-                      mealNameInput.current?.focus()
-                    }}
-                    eventClick={(info) => {
-                      const notes = info.event.extendedProps.notes
-                      setNotice({
-                        type: 'info',
-                        text: typeof notes === 'string' && notes
-                          ? `${info.event.title} — ${notes}`
-                          : info.event.title,
-                      })
-                    }}
-                  />
-                </div>
-              ) : (
-                <div className="meal-list"><h2>Planning commun <span className="subtle-count">{meals.length}</span></h2>{meals.length === 0 ? <div className="empty-filter">Aucun repas planifié pour le moment.</div> : meals.map((meal) => <article className="meal-card" key={meal.id}><div className="meal-date">{meal.planned_for ? new Date(`${meal.planned_for}T12:00:00`).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) : '—'}</div><div className="meal-details"><strong>{meal.name}</strong>{meal.planned_for && <span>{new Date(`${meal.planned_for}T12:00:00`).toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span>}{meal.notes && <p>{meal.notes}</p>}</div><button className="text-button" onClick={() => void deleteMeal(meal)}>Supprimer</button></article>)}</div>
-              )}
+              <div className="meal-list"><h2>Planning commun <span className="subtle-count">{meals.length}</span></h2>{meals.length === 0 ? <div className="empty-filter">Aucun repas planifié pour le moment.</div> : meals.map((meal) => <article className="meal-card" key={meal.id}><div className="meal-date">{meal.planned_for ? new Date(`${meal.planned_for}T12:00:00`).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) : '—'}</div><div className="meal-details"><strong>{meal.name}</strong>{meal.planned_for && <span>{new Date(`${meal.planned_for}T12:00:00`).toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span>}{meal.notes && <p>{meal.notes}</p>}</div><button className="text-button" onClick={() => void deleteMeal(meal)}>Supprimer</button></article>)}</div>
+            </section>
+          ) : activeTab === 'calendar' ? (
+            <section className="calendar-section">
+                  <div className="page-heading">
+                    <div>
+                      <span className="eyebrow">VOTRE AGENDA PARTAGÉ</span>
+                      <h1>Calendrier<span className="heading-period">.</span></h1>
+                      <p>Créez et partagez des événements avec votre groupe.</p>
+                      <p className="calendar-import-note">Les événements récurrents des fichiers .ics ne sont pas importés.</p>
+                    </div>
+                    <div className="heading-actions calendar-actions">
+                      <input
+                        ref={calendarFileInput}
+                        className="calendar-file-input"
+                        type="file"
+                        accept=".ics,text/calendar"
+                        aria-label="Importer un fichier iCalendar"
+                        onChange={(event) => void importCalendarFile(event)}
+                      />
+                      <button
+                        className="button button-secondary"
+                        type="button"
+                        disabled={importingCalendar}
+                        onClick={() => calendarFileInput.current?.click()}
+                      >{importingCalendar ? 'Import…' : 'Importer .ics'}</button>
+                      <button
+                        className="button button-secondary"
+                        type="button"
+                        disabled={calendarEvents.length === 0}
+                        onClick={exportCalendar}
+                      >Exporter .ics</button>
+                      <button className="button button-primary" type="button" onClick={() => openCalendarEvent()}>＋ Événement</button>
+                    </div>
+                  </div>
+                  <div className="calendar-event-count">{calendarEvents.length} événement(s) partagé(s)</div>
+                  <Suspense fallback={<div className="meal-calendar calendar-loading">Chargement du calendrier…</div>}>
+                    <SharedCalendar
+                      events={calendarEvents}
+                      onDateClick={(date, allDay) => openCalendarEvent(date, allDay)}
+                      onEventClick={(id) => {
+                        const event = calendarEvents.find((item) => item.id === id)
+                        if (event) editCalendarEvent(event)
+                      }}
+                      onMove={(event, revert) => void moveCalendarEvent(event, revert)}
+                    />
+                  </Suspense>
+                  {calendarEvents.length === 0 && (
+                    <p className="calendar-empty-hint">Cliquez sur une date ou sur « Événement » pour ajouter le premier rendez-vous.</p>
+                  )}
             </section>
           ) : (
             <section className="members-section">
@@ -785,6 +1075,50 @@ function App() {
         <footer className="footer"><span>NutriScan <span className="footer-dot">·</span> Votre espace, à partager.</span><span>Une alimentation plus éclairée, ensemble.</span></footer>
       </main>
 
+      {eventModalOpen && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => { if (event.target === event.currentTarget) setEventModalOpen(false) }}
+        >
+          <section className="scanner-modal calendar-event-modal" role="dialog" aria-modal="true" aria-labelledby="calendar-event-title">
+            <button className="modal-close" type="button" onClick={() => setEventModalOpen(false)} aria-label="Fermer">×</button>
+            <span className="eyebrow">AGENDA PARTAGÉ</span>
+            <h2 id="calendar-event-title">{editingEventId ? 'Modifier l’événement' : 'Nouvel événement'}</h2>
+            <form className="calendar-event-form" onSubmit={(event) => void saveCalendarEvent(event)}>
+              <label>Titre<input value={calendarEventTitle} onChange={(event) => setCalendarEventTitle(event.target.value)} placeholder="Ex. rendez-vous médical" required maxLength={160} autoFocus /></label>
+              <label className="calendar-all-day">
+                <input type="checkbox" checked={calendarEventAllDay} onChange={(event) => setCalendarEventAllDay(event.target.checked)} />
+                Toute la journée
+              </label>
+              <label>Début<input
+                type={calendarEventAllDay ? 'date' : 'datetime-local'}
+                value={calendarEventAllDay ? calendarEventStart.slice(0, 10) : calendarEventStart}
+                onChange={(event) => setCalendarEventStart(calendarEventAllDay ? `${event.target.value}T09:00` : event.target.value)}
+                required
+              /></label>
+              <label>Fin<input
+                type={calendarEventAllDay ? 'date' : 'datetime-local'}
+                value={calendarEventAllDay ? calendarEventEnd.slice(0, 10) : calendarEventEnd}
+                onChange={(event) => setCalendarEventEnd(calendarEventAllDay ? `${event.target.value}T10:00` : event.target.value)}
+                required
+              /></label>
+              <label className="calendar-description">Description<textarea
+                value={calendarEventDescription}
+                onChange={(event) => setCalendarEventDescription(event.target.value)}
+                placeholder="Ajouter des détails…"
+                maxLength={4000}
+                rows={4}
+              /></label>
+              <div className="calendar-event-form-actions">
+                {editingEventId && <button className="button calendar-delete-button" type="button" onClick={() => void deleteCalendarEvent()}>Supprimer</button>}
+                <button className="button button-secondary" type="button" onClick={() => setEventModalOpen(false)}>Annuler</button>
+                <button className="button button-primary" type="submit" disabled={savingCalendarEvent}>{savingCalendarEvent ? 'Enregistrement…' : 'Enregistrer'}</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
       {manualOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setManualOpen(false) }}><section className="scanner-modal manual-modal" role="dialog" aria-modal="true" aria-labelledby="manual-title"><button className="modal-close" onClick={() => setManualOpen(false)} aria-label="Fermer">×</button><span className="eyebrow">AJOUTER À LA LISTE</span><h2 id="manual-title">Saisie manuelle</h2><p className="modal-description">Ajoutez un produit même s’il n’a pas de code-barres.</p><form className="manual-form" onSubmit={(event) => void saveManualProduct(event)}><label>Nom du produit<input value={manualName} onChange={(event) => setManualName(event.target.value)} placeholder="Ex. farine de blé" required maxLength={120} /></label><label>Quantité<input type="number" min="0.001" step="0.001" value={manualAmount} onChange={(event) => setManualAmount(event.target.value)} required /></label><label>Unité<select value={manualUnit} onChange={(event) => setManualUnit(event.target.value)}><option>unité</option><option>g</option><option>kg</option><option>ml</option><option>l</option></select></label><label>Date de péremption<input type="date" value={expirationDate} onChange={(event) => setExpirationDate(event.target.value)} /></label><button className="button button-primary button-wide" disabled={savingProduct}>{savingProduct ? 'Ajout en cours…' : 'Ajouter à la liste'}<span>↗</span></button></form></section></div>}
       {scannerOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setScannerOpen(false) }}><section className="scanner-modal" role="dialog" aria-modal="true" aria-labelledby="scanner-title"><button className="modal-close" onClick={() => setScannerOpen(false)} aria-label="Fermer">×</button><span className="eyebrow">AJOUTER À LA LISTE</span><h2 id="scanner-title">Scanner un produit</h2><p className="modal-description">Pointez la caméra sur le code-barres du produit.</p><div className="scanner-frame">{scannerOpen && <div id="qr-reader" />}{!scanning && <div className="scanner-placeholder"><span>▣</span><p>Autorisez l’accès à la caméra<br />pour scanner le code-barres.</p></div>}</div><div className="scanner-divider"><span>OU SAISIR LE CODE</span></div><form className="barcode-form" onSubmit={(event) => void lookupProduct(event)}><input value={barcode} onChange={(event) => { setBarcode(event.target.value); setFoundProduct(null) }} placeholder="Ex. 3017620422003" inputMode="numeric" aria-label="Code-barres du produit" /><button className="button button-primary" disabled={lookupBusy || !barcode.trim()}>{lookupBusy ? 'Recherche…' : 'Rechercher'}</button></form>{foundProduct && <div className="found-product"><ProductPreview data={foundProduct.data} /><div className="product-entry-fields"><label>Quantité<input type="number" min="0.001" step="0.001" value={newAmount} onChange={(event) => setNewAmount(event.target.value)} /></label><label>Unité<select value={newUnit} onChange={(event) => setNewUnit(event.target.value)}><option>unité</option><option>g</option><option>kg</option><option>ml</option><option>l</option></select></label><label>Date de péremption<input type="date" value={expirationDate} onChange={(event) => setExpirationDate(event.target.value)} /></label></div><button className="button button-primary button-wide" onClick={() => void saveProduct()} disabled={savingProduct || !Number.isFinite(Number(newAmount)) || Number(newAmount) <= 0}>{savingProduct ? 'Ajout en cours…' : 'Ajouter à la liste partagée'}<span>↗</span></button></div>}<p className="scanner-privacy">L’accès caméra est utilisé uniquement pour lire le code-barres.</p></section></div>}
     </div>
