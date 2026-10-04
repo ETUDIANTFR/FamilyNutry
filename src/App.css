@@ -1418,6 +1418,70 @@
   background: #fff;
 }
 
+.meal-calendar {
+  --fc-border-color: #e9ece6;
+  --fc-button-bg-color: var(--green);
+  --fc-button-border-color: var(--green);
+  --fc-button-hover-bg-color: var(--green-dark);
+  --fc-button-hover-border-color: var(--green-dark);
+  --fc-button-active-bg-color: var(--green-dark);
+  --fc-button-active-border-color: var(--green-dark);
+  --fc-event-bg-color: var(--green);
+  --fc-event-border-color: var(--green);
+  --fc-event-text-color: #fff;
+  overflow: hidden;
+  padding: 18px;
+  border: 1px solid #e9ece6;
+  border-radius: 9px;
+  background: #fff;
+  color: #414940;
+}
+
+.meal-calendar .fc {
+  font-family: var(--body);
+  font-size: 11px;
+}
+
+.meal-calendar .fc .fc-toolbar-title {
+  color: #343d34;
+  font-family: var(--heading);
+  font-size: 18px;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.meal-calendar .fc .fc-button {
+  border-radius: 5px;
+  box-shadow: none;
+  font-family: var(--body);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.meal-calendar .fc .fc-button:focus {
+  box-shadow: 0 0 0 2px rgb(75 117 70 / 20%);
+}
+
+.meal-calendar .fc .fc-daygrid-day.fc-day-today {
+  background: #f3f7f0;
+}
+
+.meal-calendar .fc .fc-daygrid-day-number {
+  padding: 7px;
+  color: #596255;
+  text-decoration: none;
+}
+
+.meal-calendar .fc .fc-daygrid-event {
+  margin: 2px 4px;
+  border-radius: 4px;
+  font-size: 10px;
+}
+
+.meal-calendar .fc .fc-daygrid-day-frame {
+  min-height: 88px;
+}
+
 .meal-list h2 {
   margin: 0 0 9px;
   color: #343d34;
@@ -1475,6 +1539,7 @@
 
 .member-panel {
   overflow: hidden;
+  margin-bottom: 16px;
   border: 1px solid #e8ece5;
   border-radius: 9px;
   background: #fff;
@@ -1542,6 +1607,44 @@
   margin-left: 5px;
   padding: 0 10px;
   font-size: 10px;
+}
+
+.role-pill,
+.revoked-pill {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  border-radius: 12px;
+  color: #50754d;
+  background: #edf5ea;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.revoked-pill {
+  color: #a14b40;
+  background: #fbefed;
+}
+
+.revoke-button {
+  min-height: 32px;
+  flex: 0 0 auto;
+  margin-left: 5px;
+  padding: 0 10px;
+  border-color: #f0d9d5;
+  color: #a14b40;
+  background: #fff8f7;
+  font-size: 10px;
+}
+
+.revoke-button:hover:not(:disabled) {
+  border-color: #dfa9a1;
+  background: #fbefed;
+}
+
+.revoke-button:disabled,
+.approve-button:disabled {
+  cursor: wait;
+  opacity: 0.6;
 }
 
 .no-pending {
@@ -1973,6 +2076,24 @@
     grid-column: auto;
   }
 
+  .meal-calendar {
+    padding: 12px 8px;
+  }
+
+  .meal-calendar .fc .fc-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 9px;
+  }
+
+  .meal-calendar .fc .fc-toolbar-title {
+    font-size: 16px;
+  }
+
+  .meal-calendar .fc .fc-daygrid-day-frame {
+    min-height: 65px;
+  }
+
   .search-box {
     width: 100%;
   }
@@ -2063,6 +2184,11 @@
   }
 
   .approve-button {
+    width: 100%;
+    margin: 0;
+  }
+
+  .revoke-button {
     width: 100%;
     margin: 0;
   }

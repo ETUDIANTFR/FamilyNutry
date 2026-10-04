@@ -1,4 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import FullCalendar from '@fullcalendar/react'
+import dayGridPlugin from '@fullcalendar/daygrid'
+import interactionPlugin from '@fullcalendar/interaction'
+import frLocale from '@fullcalendar/core/locales/fr'
 import type { Html5Qrcode } from 'html5-qrcode'
 import type { FormEvent } from 'react'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
@@ -33,6 +37,8 @@ function App() {
   const [products, setProducts] = useState<Product[]>([])
   const [meals, setMeals] = useState<Meal[]>([])
   const [pendingUsers, setPendingUsers] = useState<Profile[]>([])
+  const [memberUsers, setMemberUsers] = useState<Profile[]>([])
+  const [revokingUserId, setRevokingUserId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login')
   const [email, setEmail] = useState('')
@@ -60,6 +66,8 @@ function App() {
   const [mealDate, setMealDate] = useState('')
   const [mealNotes, setMealNotes] = useState('')
   const [savingMeal, setSavingMeal] = useState(false)
+  const [showMealCalendar, setShowMealCalendar] = useState(false)
+  const mealNameInput = useRef<HTMLInputElement>(null)
   const loadProducts = useCallback(async () => {
     const { data, error } = await supabase.from('products').select('*').order('updated_at', { ascending: false })
     if (error) {
@@ -87,6 +95,19 @@ function App() {
     setPendingUsers(data ?? [])
   }, [])
 
+  const loadMemberUsers = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .in('status', ['approved', 'revoked'])
+      .order('created_at')
+    if (error) {
+      setNotice({ type: 'error', text: `Impossible de charger les membres : ${error.message}` })
+      return
+    }
+    setMemberUsers(data ?? [])
+  }, [])
+
   const loadProfile = useCallback(async (userId: string) => {
     const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle()
     if (error) {
@@ -97,9 +118,12 @@ function App() {
     if (data?.status === 'approved') {
       void loadProducts()
       void loadMeals()
-      if (data.role === 'admin') void loadPendingUsers()
+      if (data.role === 'admin') {
+        void loadPendingUsers()
+        void loadMemberUsers()
+      }
     }
-  }, [loadProducts, loadMeals, loadPendingUsers])
+  }, [loadProducts, loadMeals, loadPendingUsers, loadMemberUsers])
 
   useEffect(() => {
     let active = true
@@ -125,6 +149,13 @@ function App() {
           const { data: pendingData, error: pendingError } = await supabase.from('profiles').select('*').eq('status', 'pending').order('created_at')
           if (pendingError) setNotice({ type: 'error', text: `Impossible de charger les demandes : ${pendingError.message}` })
           if (active) setPendingUsers(pendingData ?? [])
+          const { data: memberData, error: membersError } = await supabase
+            .from('profiles')
+            .select('*')
+            .in('status', ['approved', 'revoked'])
+            .order('created_at')
+          if (membersError) setNotice({ type: 'error', text: `Impossible de charger les membres : ${membersError.message}` })
+          if (active) setMemberUsers(memberData ?? [])
         }
         const { data: mealData, error: mealsError } = await supabase.from('meals').select('*').order('planned_for', { ascending: true, nullsFirst: false })
         if (mealsError) setNotice({ type: 'error', text: `Impossible de charger les repas : ${mealsError.message}` })
@@ -141,6 +172,7 @@ function App() {
         setProducts([])
         setMeals([])
         setPendingUsers([])
+        setMemberUsers([])
         setLoading(false)
       } else {
         setLoading(true)
@@ -165,14 +197,17 @@ function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => void loadProducts())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'meals' }, () => void loadMeals())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => {
-        if (profile.role === 'admin') void loadPendingUsers()
+        if (profile.role === 'admin') {
+          void loadPendingUsers()
+          void loadMemberUsers()
+        }
         if (sessionUser) void loadProfile(sessionUser.id)
       })
       .subscribe()
     return () => {
       void supabase.removeChannel(channel)
     }
-  }, [loadProducts, loadMeals, loadPendingUsers, loadProfile, profile, sessionUser])
+  }, [loadProducts, loadMeals, loadPendingUsers, loadMemberUsers, loadProfile, profile, sessionUser])
 
   const lookupBarcode = useCallback(async (value: string) => {
     const code = value.trim().replace(/\s/g, '')
@@ -287,7 +322,20 @@ function App() {
       return
     }
     setNotice({ type: 'success', text: `${user.full_name || user.email} peut maintenant accéder à la liste.` })
-    await loadPendingUsers()
+    await Promise.all([loadPendingUsers(), loadMemberUsers()])
+  }
+
+  async function revokeUser(user: Profile) {
+    if (user.role !== 'member' || user.id === sessionUser?.id) return
+    setRevokingUserId(user.id)
+    const { error } = await supabase.rpc('revoke_member', { p_user_id: user.id })
+    if (error) {
+      setNotice({ type: 'error', text: `Révocation impossible : ${error.message}` })
+    } else {
+      setNotice({ type: 'success', text: `L’accès de ${user.full_name || user.email} a été révoqué.` })
+      await Promise.all([loadPendingUsers(), loadMemberUsers()])
+    }
+    setRevokingUserId(null)
   }
 
   async function lookupProduct(event: FormEvent<HTMLFormElement>) {
@@ -534,7 +582,9 @@ function App() {
           <div className="pending-icon">◷</div>
           <span className="eyebrow">DEMANDE EN COURS</span>
           <h1>Un petit instant.</h1>
-          <p>Votre compte est créé. Un administrateur doit approuver votre accès avant que vous puissiez consulter la liste partagée.</p>
+          <p>{profile?.status === 'revoked'
+            ? 'Votre accès à la liste partagée a été révoqué. Contactez un administrateur si vous pensez qu’il s’agit d’une erreur.'
+            : 'Votre compte est créé. Un administrateur doit approuver votre accès avant que vous puissiez consulter la liste partagée.'}</p>
           <NoticeView notice={notice} />
           <button className="button button-secondary" onClick={() => sessionUser && void loadProfile(sessionUser.id)}>Vérifier mon accès</button>
           <button className="text-button" onClick={() => void signOut()}>Se déconnecter</button>
@@ -585,17 +635,151 @@ function App() {
             </>
           ) : activeTab === 'meals' ? (
             <section className="meals-section">
-              <div className="page-heading"><div><span className="eyebrow">PLANIFICATION PARTAGÉE</span><h1>Les repas<span className="heading-period">.</span></h1><p>Organisez les repas à venir avec votre groupe.</p></div></div>
+              <div className="page-heading">
+                <div><span className="eyebrow">PLANIFICATION PARTAGÉE</span><h1>Les repas<span className="heading-period">.</span></h1><p>Organisez les repas à venir avec votre groupe.</p></div>
+                <div className="heading-actions">
+                  <button
+                    className={`button ${showMealCalendar ? 'button-primary' : 'button-secondary'}`}
+                    type="button"
+                    aria-pressed={showMealCalendar}
+                    onClick={() => setShowMealCalendar((visible) => !visible)}
+                  >{showMealCalendar ? '☷ Liste' : '▦ Calendrier'}</button>
+                </div>
+              </div>
               <form className="meal-form" onSubmit={(event) => void addMeal(event)}>
-                <label>Nom du repas<input value={mealName} onChange={(event) => setMealName(event.target.value)} placeholder="Ex. soupe de légumes" required maxLength={120} /></label>
+                <label>Nom du repas<input ref={mealNameInput} value={mealName} onChange={(event) => setMealName(event.target.value)} placeholder="Ex. soupe de légumes" required maxLength={120} /></label>
                 <label>Date prévue<input type="date" value={mealDate} onChange={(event) => setMealDate(event.target.value)} /></label>
                 <label className="meal-notes">Notes<textarea value={mealNotes} onChange={(event) => setMealNotes(event.target.value)} placeholder="Idées, préparation…" maxLength={500} /></label>
                 <button className="button button-primary" disabled={savingMeal}>{savingMeal ? 'Ajout…' : 'Ajouter au planning'}</button>
               </form>
-              <div className="meal-list"><h2>Planning commun <span className="subtle-count">{meals.length}</span></h2>{meals.length === 0 ? <div className="empty-filter">Aucun repas planifié pour le moment.</div> : meals.map((meal) => <article className="meal-card" key={meal.id}><div className="meal-date">{meal.planned_for ? new Date(`${meal.planned_for}T12:00:00`).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) : '—'}</div><div className="meal-details"><strong>{meal.name}</strong>{meal.planned_for && <span>{new Date(`${meal.planned_for}T12:00:00`).toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span>}{meal.notes && <p>{meal.notes}</p>}</div><button className="text-button" onClick={() => void deleteMeal(meal)}>Supprimer</button></article>)}</div>
+              {showMealCalendar ? (
+                <div className="meal-calendar">
+                  <FullCalendar
+                    plugins={[dayGridPlugin, interactionPlugin]}
+                    initialView="dayGridMonth"
+                    locale={frLocale}
+                    firstDay={1}
+                    height="auto"
+                    fixedWeekCount={false}
+                    dayMaxEvents
+                    headerToolbar={{ start: 'title', center: '', end: 'today prev,next' }}
+                    buttonText={{ today: 'Aujourd’hui' }}
+                    events={meals.flatMap((meal) => meal.planned_for ? [{
+                      id: meal.id,
+                      title: meal.name,
+                      start: meal.planned_for,
+                      allDay: true,
+                      extendedProps: { notes: meal.notes },
+                    }] : [])}
+                    dateClick={(info) => {
+                      setMealDate(info.dateStr)
+                      setNotice({ type: 'info', text: `Date sélectionnée : ${new Date(`${info.dateStr}T12:00:00`).toLocaleDateString('fr-FR')}. Ajoutez le nom du repas dans le formulaire.` })
+                      mealNameInput.current?.focus()
+                    }}
+                    eventClick={(info) => {
+                      const notes = info.event.extendedProps.notes
+                      setNotice({
+                        type: 'info',
+                        text: typeof notes === 'string' && notes
+                          ? `${info.event.title} — ${notes}`
+                          : info.event.title,
+                      })
+                    }}
+                  />
+                </div>
+              ) : (
+                <div className="meal-list"><h2>Planning commun <span className="subtle-count">{meals.length}</span></h2>{meals.length === 0 ? <div className="empty-filter">Aucun repas planifié pour le moment.</div> : meals.map((meal) => <article className="meal-card" key={meal.id}><div className="meal-date">{meal.planned_for ? new Date(`${meal.planned_for}T12:00:00`).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) : '—'}</div><div className="meal-details"><strong>{meal.name}</strong>{meal.planned_for && <span>{new Date(`${meal.planned_for}T12:00:00`).toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span>}{meal.notes && <p>{meal.notes}</p>}</div><button className="text-button" onClick={() => void deleteMeal(meal)}>Supprimer</button></article>)}</div>
+              )}
             </section>
           ) : (
-            <section className="members-section"><div className="page-heading"><div><span className="eyebrow">GESTION DE L’ESPACE</span><h1>Les membres<span className="heading-period">.</span></h1><p>Validez les personnes qui peuvent rejoindre votre liste partagée.</p></div></div><div className="member-panel"><div className="member-panel-heading"><div><h2>Demandes d’accès</h2><p>Chaque demande doit être approuvée par un administrateur.</p></div><span className="pending-pill">{pendingUsers.length} en attente</span></div>{pendingUsers.length === 0 ? <div className="no-pending"><span>✓</span><strong>Tout est à jour.</strong><p>Aucune demande d’accès en attente.</p></div> : <div className="pending-list">{pendingUsers.map((user) => <div className="pending-member" key={user.id}><div className="avatar">{(user.full_name || user.email || 'M').slice(0, 1).toUpperCase()}</div><div className="member-info"><strong>{user.full_name || 'Nouveau membre'}</strong><span>{user.email}</span></div><span className="member-date">{new Date(user.created_at).toLocaleDateString('fr-FR')}</span><button className="button button-primary approve-button" onClick={() => void approveUser(user)}>Approuver <span>✓</span></button></div>)}</div>}</div></section>
+            <section className="members-section">
+              <div className="page-heading">
+                <div>
+                  <span className="eyebrow">GESTION DE L’ESPACE</span>
+                  <h1>Les membres<span className="heading-period">.</span></h1>
+                  <p>Consultez les comptes autorisés, leur dernière connexion et gérez leurs accès.</p>
+                </div>
+              </div>
+              <div className="member-panel">
+                <div className="member-panel-heading">
+                  <div><h2>Comptes autorisés</h2><p>Dernière connexion enregistrée pour chaque compte.</p></div>
+                  <span className="pending-pill">{memberUsers.filter((user) => user.status === 'approved').length} actifs</span>
+                </div>
+                {memberUsers.filter((user) => user.status === 'approved').length === 0 ? (
+                  <div className="no-pending"><span>—</span><strong>Aucun compte autorisé.</strong><p>Les comptes approuvés apparaîtront ici.</p></div>
+                ) : (
+                  <div className="pending-list">
+                    {memberUsers.filter((user) => user.status === 'approved').map((user) => (
+                      <div className="pending-member" key={user.id}>
+                        <div className="avatar">{(user.full_name || user.email || 'M').slice(0, 1).toUpperCase()}</div>
+                        <div className="member-info">
+                          <strong>{user.full_name || 'Membre'}</strong>
+                          <span>{user.email}</span>
+                        </div>
+                        <span className="member-date">
+                          Dernière connexion : {user.last_sign_in_at
+                            ? new Date(user.last_sign_in_at).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' })
+                            : 'Jamais'}
+                        </span>
+                        {user.role === 'admin'
+                          ? <span className="role-pill">Administrateur</span>
+                          : user.id === sessionUser?.id
+                            ? <span className="role-pill">Vous</span>
+                            : <button
+                              className="button revoke-button"
+                              disabled={revokingUserId === user.id}
+                              onClick={() => void revokeUser(user)}
+                            >{revokingUserId === user.id ? 'Révocation…' : 'Révoquer l’accès'}</button>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {memberUsers.some((user) => user.status === 'revoked') && (
+                <div className="member-panel">
+                  <div className="member-panel-heading">
+                    <div><h2>Accès révoqués</h2><p>Ces comptes ne peuvent plus accéder à l’espace partagé.</p></div>
+                    <span className="revoked-pill">{memberUsers.filter((user) => user.status === 'revoked').length}</span>
+                  </div>
+                  <div className="pending-list">
+                    {memberUsers.filter((user) => user.status === 'revoked').map((user) => (
+                      <div className="pending-member" key={user.id}>
+                        <div className="avatar">{(user.full_name || user.email || 'M').slice(0, 1).toUpperCase()}</div>
+                        <div className="member-info"><strong>{user.full_name || 'Membre'}</strong><span>{user.email}</span></div>
+                        <span className="member-date">Dernière connexion : {user.last_sign_in_at
+                          ? new Date(user.last_sign_in_at).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' })
+                          : 'Jamais'}</span>
+                        <button
+                          className="button button-primary approve-button"
+                          disabled={revokingUserId === user.id}
+                          onClick={() => void approveUser(user)}
+                        >Rétablir l’accès <span>✓</span></button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div className="member-panel">
+                <div className="member-panel-heading">
+                  <div><h2>Demandes d’accès</h2><p>Chaque demande doit être approuvée par un administrateur.</p></div>
+                  <span className="pending-pill">{pendingUsers.length} en attente</span>
+                </div>
+                {pendingUsers.length === 0 ? (
+                  <div className="no-pending"><span>✓</span><strong>Tout est à jour.</strong><p>Aucune demande d’accès en attente.</p></div>
+                ) : (
+                  <div className="pending-list">
+                    {pendingUsers.map((user) => (
+                      <div className="pending-member" key={user.id}>
+                        <div className="avatar">{(user.full_name || user.email || 'M').slice(0, 1).toUpperCase()}</div>
+                        <div className="member-info"><strong>{user.full_name || 'Nouveau membre'}</strong><span>{user.email}</span></div>
+                        <span className="member-date">{new Date(user.created_at).toLocaleDateString('fr-FR')}</span>
+                        <button className="button button-primary approve-button" onClick={() => void approveUser(user)}>Approuver <span>✓</span></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
           )}
         </div>
         <footer className="footer"><span>NutriScan <span className="footer-dot">·</span> Votre espace, à partager.</span><span>Une alimentation plus éclairée, ensemble.</span></footer>

@@ -4,9 +4,10 @@ export type Profile = {
   id: string
   email: string
   full_name: string | null
-  status: 'pending' | 'approved'
+  status: 'pending' | 'approved' | 'revoked'
   role: 'member' | 'admin'
   created_at: string
+  last_sign_in_at: string | null
 }
 
 export type Product = {
@@ -47,7 +48,7 @@ type Table<Row, Insert, Update = Partial<Insert>> = {
 type Database = {
   public: {
     Tables: {
-      profiles: Table<Profile, Pick<Profile, 'id' | 'email' | 'full_name'> & Partial<Pick<Profile, 'status' | 'role' | 'created_at'>>>
+      profiles: Table<Profile, Pick<Profile, 'id' | 'email' | 'full_name'> & Partial<Pick<Profile, 'status' | 'role' | 'created_at' | 'last_sign_in_at'>>>
       products: Table<Product, Omit<Product, 'id' | 'created_at' | 'updated_at'> & Partial<Pick<Product, 'id' | 'created_at' | 'updated_at'>>>
       meals: Table<Meal, Omit<Meal, 'id' | 'created_at'> & Partial<Pick<Meal, 'id' | 'created_at'>>>
     }
@@ -55,6 +56,10 @@ type Database = {
     Functions: {
       consume_product: {
         Args: { p_product_id: string; p_amount: number }
+        Returns: undefined
+      }
+      revoke_member: {
+        Args: { p_user_id: string }
         Returns: undefined
       }
     }
