@@ -10,9 +10,27 @@ create table public.profiles (
   last_sign_in_at timestamptz
 );
 
+create table public.zones (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique check (length(trim(name)) between 1 and 80),
+  created_by uuid references public.profiles (id) on delete set null,
+  created_at timestamptz not null default now()
+);
+
+create table public.zone_members (
+  zone_id uuid not null references public.zones (id) on delete cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (zone_id, user_id)
+);
+
+insert into public.zones (name)
+values ('Zone 1');
+
 create table public.products (
   id uuid primary key default gen_random_uuid(),
-  barcode text not null unique,
+  zone_id uuid not null references public.zones (id),
+  barcode text not null,
   product_name text not null,
   brand text,
   quantity_label text,
@@ -26,11 +44,13 @@ create table public.products (
   created_by uuid not null references public.profiles (id),
   updated_by uuid not null references public.profiles (id),
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  unique (zone_id, barcode)
 );
 
 create table public.meals (
   id uuid primary key default gen_random_uuid(),
+  zone_id uuid not null references public.zones (id),
   name text not null check (length(trim(name)) between 1 and 120),
   planned_for date,
   notes text,
@@ -40,11 +60,13 @@ create table public.meals (
 
 create table public.calendar_events (
   id uuid primary key default gen_random_uuid(),
+  zone_id uuid not null references public.zones (id),
   title text not null check (length(trim(title)) between 1 and 160),
   description text,
   starts_at timestamptz not null,
   ends_at timestamptz not null,
   all_day boolean not null default false,
+  color text not null default '#4F7548' check (color ~ '^#[0-9A-Fa-f]{6}$'),
   created_by uuid not null references public.profiles (id) on delete cascade,
   created_at timestamptz not null default now(),
   check (ends_at > starts_at)
@@ -52,6 +74,7 @@ create table public.calendar_events (
 
 create table public.shopping_list_items (
   id uuid primary key default gen_random_uuid(),
+  zone_id uuid not null references public.zones (id),
   name text not null check (length(trim(name)) between 1 and 120),
   is_checked boolean not null default false,
   created_by uuid not null references public.profiles (id) on delete cascade,
@@ -100,6 +123,53 @@ as $$
     where id = (select auth.uid()) and status = 'approved' and role = 'admin'
   );
 $$;
+
+create or replace function public.has_zone_access(p_zone_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select (select public.is_admin())
+    or (
+      (select public.is_approved_member())
+      and exists (
+        select 1 from public.zone_members
+        where zone_id = p_zone_id and user_id = (select auth.uid())
+      )
+    );
+$$;
+
+create or replace function public.assign_default_zone_to_approved_member()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  default_zone_id uuid;
+begin
+  if new.status <> 'approved' then return new; end if;
+  if exists (select 1 from public.zone_members where user_id = new.id) then return new; end if;
+
+  select id into default_zone_id from public.zones where name = 'Zone 1';
+  if default_zone_id is null then
+    raise exception 'La Zone 1 par défaut est introuvable.';
+  end if;
+
+  insert into public.zone_members (zone_id, user_id)
+  values (default_zone_id, new.id)
+  on conflict do nothing;
+  return new;
+end;
+$$;
+
+create trigger assign_default_zone_after_approval
+  after insert or update of status on public.profiles
+  for each row
+  when (new.status = 'approved')
+  execute procedure public.assign_default_zone_to_approved_member();
 
 create or replace function public.sync_profile_last_sign_in()
 returns trigger
@@ -206,6 +276,8 @@ alter table public.products enable row level security;
 alter table public.meals enable row level security;
 alter table public.calendar_events enable row level security;
 alter table public.shopping_list_items enable row level security;
+alter table public.zones enable row level security;
+alter table public.zone_members enable row level security;
 
 create policy "Members can read their own profile and admins can read all"
   on public.profiles for select to authenticated
@@ -218,71 +290,100 @@ create policy "Admins can approve members"
 
 create policy "Approved members can read shared products"
   on public.products for select to authenticated
-  using ((select public.is_approved_member()));
+  using ((select public.has_zone_access(zone_id)));
 
 create policy "Approved members can add shared products"
   on public.products for insert to authenticated
-  with check ((select public.is_approved_member()) and created_by = (select auth.uid()) and updated_by = (select auth.uid()));
+  with check ((select public.has_zone_access(zone_id)) and created_by = (select auth.uid()) and updated_by = (select auth.uid()));
 
 create policy "Approved members can update shared products"
   on public.products for update to authenticated
-  using ((select public.is_approved_member()))
-  with check ((select public.is_approved_member()) and updated_by = (select auth.uid()));
+  using ((select public.has_zone_access(zone_id)))
+  with check ((select public.has_zone_access(zone_id)) and updated_by = (select auth.uid()));
 
 create policy "Approved members can remove shared products"
   on public.products for delete to authenticated
-  using ((select public.is_approved_member()));
+  using ((select public.has_zone_access(zone_id)));
 
 create policy "Approved members can read shared meals"
   on public.meals for select to authenticated
-  using ((select public.is_approved_member()));
+  using ((select public.has_zone_access(zone_id)));
 
 create policy "Approved members can add shared meals"
   on public.meals for insert to authenticated
-  with check ((select public.is_approved_member()) and created_by = (select auth.uid()));
+  with check ((select public.has_zone_access(zone_id)) and created_by = (select auth.uid()));
 
 create policy "Approved members can update shared meals"
   on public.meals for update to authenticated
-  using ((select public.is_approved_member()))
-  with check ((select public.is_approved_member()));
+  using ((select public.has_zone_access(zone_id)))
+  with check ((select public.has_zone_access(zone_id)));
 
 create policy "Approved members can remove shared meals"
   on public.meals for delete to authenticated
-  using ((select public.is_approved_member()));
+  using ((select public.has_zone_access(zone_id)));
 
 create policy "Approved members can read shared calendar events"
   on public.calendar_events for select to authenticated
-  using ((select public.is_approved_member()));
+  using ((select public.has_zone_access(zone_id)));
 
 create policy "Approved members can add shared calendar events"
   on public.calendar_events for insert to authenticated
-  with check ((select public.is_approved_member()) and created_by = (select auth.uid()));
+  with check ((select public.has_zone_access(zone_id)) and created_by = (select auth.uid()));
 
 create policy "Approved members can update shared calendar events"
   on public.calendar_events for update to authenticated
-  using ((select public.is_approved_member()))
-  with check ((select public.is_approved_member()));
+  using ((select public.has_zone_access(zone_id)))
+  with check ((select public.has_zone_access(zone_id)));
 
 create policy "Approved members can remove shared calendar events"
   on public.calendar_events for delete to authenticated
-  using ((select public.is_approved_member()));
+  using ((select public.has_zone_access(zone_id)));
 
 create policy "Approved members can read shared shopping items"
   on public.shopping_list_items for select to authenticated
-  using ((select public.is_approved_member()));
+  using ((select public.has_zone_access(zone_id)));
 
 create policy "Approved members can add shared shopping items"
   on public.shopping_list_items for insert to authenticated
-  with check ((select public.is_approved_member()) and created_by = (select auth.uid()));
+  with check ((select public.has_zone_access(zone_id)) and created_by = (select auth.uid()));
 
 create policy "Approved members can update shared shopping items"
   on public.shopping_list_items for update to authenticated
-  using ((select public.is_approved_member()))
-  with check ((select public.is_approved_member()));
+  using ((select public.has_zone_access(zone_id)))
+  with check ((select public.has_zone_access(zone_id)));
 
 create policy "Approved members can remove shared shopping items"
   on public.shopping_list_items for delete to authenticated
-  using ((select public.is_approved_member()));
+  using ((select public.has_zone_access(zone_id)));
+
+create policy "Members can read accessible zones"
+  on public.zones for select to authenticated
+  using ((select public.has_zone_access(id)));
+
+create policy "Admins can create zones"
+  on public.zones for insert to authenticated
+  with check ((select public.is_admin()));
+
+create policy "Admins can update zones"
+  on public.zones for update to authenticated
+  using ((select public.is_admin()))
+  with check ((select public.is_admin()));
+
+create policy "Admins can remove zones"
+  on public.zones for delete to authenticated
+  using ((select public.is_admin()));
+
+create policy "Members can read their zone memberships"
+  on public.zone_members for select to authenticated
+  using (user_id = (select auth.uid()) or (select public.is_admin()));
+
+create policy "Admins can grant zone access"
+  on public.zone_members for insert to authenticated
+  with check ((select public.is_admin()));
+
+create policy "Admins can revoke zone access"
+  on public.zone_members for delete to authenticated
+  using ((select public.is_admin()));
 
 grant usage on schema public to authenticated;
 grant select, update on public.profiles to authenticated;
@@ -290,13 +391,18 @@ grant select, insert, update, delete on public.products to authenticated;
 grant select, insert, update, delete on public.meals to authenticated;
 grant select, insert, update, delete on public.calendar_events to authenticated;
 grant select, insert, update, delete on public.shopping_list_items to authenticated;
+grant select, insert, update, delete on public.zones to authenticated;
+grant select, insert, delete on public.zone_members to authenticated;
 grant execute on function public.consume_product(uuid, numeric) to authenticated;
+grant execute on function public.has_zone_access(uuid) to authenticated;
 
 alter publication supabase_realtime add table public.products;
 alter publication supabase_realtime add table public.profiles;
 alter publication supabase_realtime add table public.meals;
 alter publication supabase_realtime add table public.calendar_events;
 alter publication supabase_realtime add table public.shopping_list_items;
+alter publication supabase_realtime add table public.zones;
+alter publication supabase_realtime add table public.zone_members;
 
 create or replace function public.enforce_user_limit()
 returns trigger

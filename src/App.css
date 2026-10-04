@@ -519,6 +519,30 @@
   font-size: 10px;
 }
 
+.group-switcher {
+  display: grid;
+  min-width: 124px;
+  gap: 3px;
+}
+
+.group-switcher label {
+  color: #899184;
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: 0.55px;
+}
+
+.group-switcher select {
+  width: 100%;
+  min-height: 28px;
+  padding: 3px 7px;
+  border: 1px solid #e4e9e0;
+  border-radius: 5px;
+  color: #475244;
+  background: #fbfcfa;
+  font-size: 10px;
+}
+
 .online-dot,
 .sync-indicator i {
   width: 7px;
@@ -1754,6 +1778,18 @@
   grid-column: 1 / -1;
 }
 
+.calendar-event-form > .calendar-color-field {
+  grid-column: 1 / -1;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+}
+
+.calendar-event-form .calendar-color-field input[type='color'] {
+  width: 54px;
+  min-height: 34px;
+  padding: 3px;
+}
+
 .calendar-event-form input:not([type='checkbox']),
 .calendar-event-form textarea {
   width: 100%;
@@ -1825,6 +1861,45 @@
   border-bottom: 1px solid #eff1ec;
 }
 
+.group-create-form,
+.group-edit-row {
+  display: grid;
+  grid-template-columns: minmax(130px, 1fr) minmax(180px, 2fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 19px;
+  border-bottom: 1px solid #f0f1ed;
+}
+
+.group-create-form > label,
+.group-edit-row > label {
+  color: #596255;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.group-create-form input,
+.group-edit-row input {
+  width: 100%;
+  min-height: 37px;
+  padding: 7px 10px;
+  border: 1px solid #e4e8df;
+  border-radius: 5px;
+  color: #414940;
+  background: #fff;
+  font-size: 11px;
+}
+
+.group-create-form .button,
+.group-edit-row .button {
+  min-height: 37px;
+  font-size: 10px;
+}
+
+.group-edit-list .group-edit-row:last-child {
+  border-bottom: 0;
+}
+
 .pending-pill {
   padding: 5px 8px;
   border-radius: 12px;
@@ -1848,6 +1923,43 @@
 
 .pending-member:last-child {
   border-bottom: 0;
+}
+
+.member-groups {
+  position: relative;
+  color: #52604f;
+  font-size: 10px;
+}
+
+.member-groups summary {
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.member-group-options {
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + 6px);
+  right: 0;
+  display: grid;
+  min-width: 150px;
+  gap: 8px;
+  padding: 11px;
+  border: 1px solid #e5e9e1;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 8px 20px rgba(35, 47, 33, 0.12);
+}
+
+.member-group-options label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.member-group-options input {
+  accent-color: var(--green);
 }
 
 .member-info {
@@ -2288,6 +2400,32 @@
     padding: 0 19px;
   }
 
+  .breadcrumb {
+    display: none;
+  }
+
+  .topbar-right {
+    gap: 8px;
+  }
+
+  .topbar-right .sync-indicator {
+    display: none;
+  }
+
+  .group-switcher {
+    min-width: 104px;
+  }
+
+  .group-switcher label {
+    display: none;
+  }
+
+  .group-switcher select {
+    min-height: 31px;
+    max-width: 135px;
+    font-size: 9px;
+  }
+
   .content-wrap {
     min-height: calc(100vh - 126px);
     padding: 31px 19px 28px;
@@ -2360,6 +2498,16 @@
 
   .meal-form {
     grid-template-columns: 1fr;
+  }
+
+  .group-create-form,
+  .group-edit-row {
+    grid-template-columns: 1fr auto;
+  }
+
+  .group-create-form > label,
+  .group-edit-row > label {
+    grid-column: 1 / -1;
   }
 
   .shopping-add-form {

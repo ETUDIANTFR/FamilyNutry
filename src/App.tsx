@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { Html5Qrcode } from 'html5-qrcode'
 import type { ChangeEvent, FormEvent } from 'react'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
-import type { CalendarEvent, Meal, Product, Profile, ShoppingListItem } from './lib/supabase'
+import type { CalendarEvent, Meal, Product, Profile, ShoppingListItem, Zone, ZoneMembership } from './lib/supabase'
 import type { CalendarEventMove } from './SharedCalendar'
 import './App.css'
 
@@ -77,6 +77,13 @@ function App() {
   const [addingShoppingItem, setAddingShoppingItem] = useState(false)
   const [meals, setMeals] = useState<Meal[]>([])
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([])
+  const [zones, setZones] = useState<Zone[]>([])
+  const [zoneMemberships, setZoneMemberships] = useState<ZoneMembership[]>([])
+  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null)
+  const [writeZoneId, setWriteZoneId] = useState('')
+  const [newZoneName, setNewZoneName] = useState('')
+  const [zoneNameEdits, setZoneNameEdits] = useState<Record<string, string>>({})
+  const [savingZone, setSavingZone] = useState(false)
   const [pendingUsers, setPendingUsers] = useState<Profile[]>([])
   const [memberUsers, setMemberUsers] = useState<Profile[]>([])
   const [revokingUserId, setRevokingUserId] = useState<string | null>(null)
@@ -112,11 +119,15 @@ function App() {
   const [editingEventId, setEditingEventId] = useState<string | null>(null)
   const [calendarEventTitle, setCalendarEventTitle] = useState('')
   const [calendarEventDescription, setCalendarEventDescription] = useState('')
+  const [calendarEventColor, setCalendarEventColor] = useState('#4F7548')
   const [calendarEventStart, setCalendarEventStart] = useState('')
   const [calendarEventEnd, setCalendarEventEnd] = useState('')
   const [calendarEventAllDay, setCalendarEventAllDay] = useState(false)
   const [savingCalendarEvent, setSavingCalendarEvent] = useState(false)
   const [importingCalendar, setImportingCalendar] = useState(false)
+  const activeZoneId = selectedZoneId && zones.some((zone) => zone.id === selectedZoneId) ? selectedZoneId : null
+  const effectiveWriteZoneId = zones.some((zone) => zone.id === writeZoneId) ? writeZoneId : zones[0]?.id ?? ''
+  const creationZoneId = activeZoneId ?? effectiveWriteZoneId
   const loadProducts = useCallback(async () => {
     const { data, error } = await supabase.from('products').select('*').order('updated_at', { ascending: false })
     if (error) {
@@ -143,6 +154,24 @@ function App() {
     }
     setCalendarEvents(data ?? [])
     return true
+  }, [])
+
+  const loadZones = useCallback(async () => {
+    const { data, error } = await supabase.from('zones').select('*').order('name')
+    if (error) {
+      setNotice({ type: 'error', text: `Impossible de charger les groupes : ${error.message}` })
+      return
+    }
+    setZones(data ?? [])
+  }, [])
+
+  const loadZoneMemberships = useCallback(async () => {
+    const { data, error } = await supabase.from('zone_members').select('*')
+    if (error) {
+      setNotice({ type: 'error', text: `Impossible de charger les groupes des membres : ${error.message}` })
+      return
+    }
+    setZoneMemberships(data ?? [])
   }, [])
 
   const loadShoppingItems = useCallback(async () => {
@@ -192,12 +221,14 @@ function App() {
       void loadShoppingItems()
       void loadMeals()
       void loadCalendarEvents()
+      void loadZones()
       if (data.role === 'admin') {
         void loadPendingUsers()
         void loadMemberUsers()
+        void loadZoneMemberships()
       }
     }
-  }, [loadProducts, loadShoppingItems, loadMeals, loadCalendarEvents, loadPendingUsers, loadMemberUsers])
+  }, [loadProducts, loadShoppingItems, loadMeals, loadCalendarEvents, loadZones, loadPendingUsers, loadMemberUsers, loadZoneMemberships])
 
   useEffect(() => {
     let active = true
@@ -243,7 +274,13 @@ function App() {
             .order('created_at')
           if (membersError) setNotice({ type: 'error', text: `Impossible de charger les membres : ${membersError.message}` })
           if (active) setMemberUsers(memberData ?? [])
+          const { data: membershipData, error: membershipError } = await supabase.from('zone_members').select('*')
+          if (membershipError) setNotice({ type: 'error', text: `Impossible de charger les groupes des membres : ${membershipError.message}` })
+          if (active) setZoneMemberships(membershipData ?? [])
         }
+        const { data: zoneData, error: zonesError } = await supabase.from('zones').select('*').order('name')
+        if (zonesError) setNotice({ type: 'error', text: `Impossible de charger les groupes : ${zonesError.message}` })
+        if (active) setZones(zoneData ?? [])
         const { data: mealData, error: mealsError } = await supabase.from('meals').select('*').order('planned_for', { ascending: true, nullsFirst: false })
         if (mealsError) setNotice({ type: 'error', text: `Impossible de charger les repas : ${mealsError.message}` })
         if (active) setMeals(mealData ?? [])
@@ -260,6 +297,10 @@ function App() {
         setShoppingItems([])
         setMeals([])
         setCalendarEvents([])
+        setZones([])
+        setZoneMemberships([])
+        setSelectedZoneId(null)
+        setWriteZoneId('')
         setPendingUsers([])
         setMemberUsers([])
         setLoading(false)
@@ -287,6 +328,17 @@ function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'shopping_list_items' }, () => void loadShoppingItems())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'meals' }, () => void loadMeals())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_events' }, () => void loadCalendarEvents())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'zones' }, () => void loadZones())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'zone_members' }, () => {
+        void loadZones()
+        if (profile.role === 'admin') void loadZoneMemberships()
+        else {
+          void loadProducts()
+          void loadShoppingItems()
+          void loadMeals()
+          void loadCalendarEvents()
+        }
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => {
         if (profile.role === 'admin') {
           void loadPendingUsers()
@@ -298,7 +350,7 @@ function App() {
     return () => {
       void supabase.removeChannel(channel)
     }
-  }, [loadProducts, loadShoppingItems, loadMeals, loadCalendarEvents, loadPendingUsers, loadMemberUsers, loadProfile, profile, sessionUser])
+  }, [loadProducts, loadShoppingItems, loadMeals, loadCalendarEvents, loadZones, loadZoneMemberships, loadPendingUsers, loadMemberUsers, loadProfile, profile, sessionUser])
 
   const lookupBarcode = useCallback(async (value: string) => {
     const code = value.trim().replace(/\s/g, '')
@@ -422,7 +474,7 @@ function App() {
       return
     }
     setNotice({ type: 'success', text: `${user.full_name || user.email} peut maintenant accéder à la liste.` })
-    await Promise.all([loadPendingUsers(), loadMemberUsers()])
+    await Promise.all([loadPendingUsers(), loadMemberUsers(), loadZones(), loadZoneMemberships()])
   }
 
   async function revokeUser(user: Profile) {
@@ -447,9 +499,48 @@ function App() {
     setRevokingUserId(null)
   }
 
+  async function createZone(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const name = newZoneName.trim()
+    if (!name) return
+    setSavingZone(true)
+    const { error } = await supabase.from('zones').insert({ name, created_by: sessionUser?.id ?? null })
+    if (error) {
+      setNotice({ type: 'error', text: `Création du groupe impossible : ${error.message}` })
+    } else {
+      setNewZoneName('')
+      setNotice({ type: 'success', text: `Le groupe « ${name} » a été créé.` })
+      await loadZones()
+    }
+    setSavingZone(false)
+  }
+
+  async function renameZone(zone: Zone) {
+    const name = (zoneNameEdits[zone.id] ?? zone.name).trim()
+    if (!name || name === zone.name) return
+    const { error } = await supabase.from('zones').update({ name }).eq('id', zone.id)
+    if (error) {
+      setNotice({ type: 'error', text: `Modification du groupe impossible : ${error.message}` })
+      return
+    }
+    setNotice({ type: 'success', text: `Le groupe a été renommé « ${name} ».` })
+    await loadZones()
+  }
+
+  async function changeZoneMembership(user: Profile, zone: Zone, isMember: boolean) {
+    const result = isMember
+      ? await supabase.from('zone_members').insert({ zone_id: zone.id, user_id: user.id })
+      : await supabase.from('zone_members').delete().eq('zone_id', zone.id).eq('user_id', user.id)
+    if (result.error) {
+      setNotice({ type: 'error', text: `Modification des groupes de ${user.full_name || user.email} impossible : ${result.error.message}` })
+      return
+    }
+    await loadZoneMemberships()
+  }
+
   async function addShoppingItem(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!sessionUser) return
+    if (!sessionUser || !creationZoneId) return
     const name = shoppingItemName.trim()
     if (!name) return
     setAddingShoppingItem(true)
@@ -457,6 +548,7 @@ function App() {
       name,
       is_checked: false,
       created_by: sessionUser.id,
+      zone_id: creationZoneId,
     })
     if (error) {
       setNotice({ type: 'error', text: `Ajout à la liste de courses impossible : ${error.message}` })
@@ -496,7 +588,9 @@ function App() {
   }
 
   async function clearCheckedShoppingItems() {
-    const { error } = await supabase.from('shopping_list_items').delete().eq('is_checked', true)
+    let query = supabase.from('shopping_list_items').delete().eq('is_checked', true)
+    if (activeZoneId) query = query.eq('zone_id', activeZoneId)
+    const { error } = await query
     if (error) {
       setNotice({ type: 'error', text: `Impossible de supprimer les articles cochés : ${error.message}` })
       return
@@ -511,11 +605,11 @@ function App() {
   }
 
   async function saveProduct() {
-    if (!foundProduct || !sessionUser) return
+    if (!foundProduct || !sessionUser || !creationZoneId) return
     setSavingProduct(true)
     setNotice(null)
     const grade = (foundProduct.data.nutriscore_grade || foundProduct.data.nutrition_grades || '').toLowerCase()
-    const { data: existing, error: findError } = await supabase.from('products').select('id, quantity, quantity_unit, expiration_date').eq('barcode', foundProduct.barcode).maybeSingle()
+    const { data: existing, error: findError } = await supabase.from('products').select('id, quantity, quantity_unit, expiration_date').eq('zone_id', creationZoneId).eq('barcode', foundProduct.barcode).maybeSingle()
     if (findError) {
       setNotice({ type: 'error', text: `Vérification du produit impossible : ${findError.message}` })
       setSavingProduct(false)
@@ -542,6 +636,7 @@ function App() {
       quantity_unit: newUnit,
       expiration_date: expirationDate || existing?.expiration_date || null,
       updated_by: sessionUser.id,
+      zone_id: creationZoneId,
     }
     const saveResult = existing
       ? await supabase.from('products').update({
@@ -579,7 +674,7 @@ function App() {
 
   async function saveManualProduct(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!sessionUser) return
+    if (!sessionUser || !creationZoneId) return
     const amount = Number(manualAmount)
     if (!Number.isFinite(amount) || amount <= 0) {
       setNotice({ type: 'error', text: 'La quantité doit être supérieure à zéro.' })
@@ -606,6 +701,7 @@ function App() {
       expiration_date: expirationDate || null,
       created_by: sessionUser.id,
       updated_by: sessionUser.id,
+      zone_id: creationZoneId,
     })
     if (error) {
       setNotice({ type: 'error', text: `Ajout impossible : ${error.message}` })
@@ -623,7 +719,7 @@ function App() {
 
   async function consumeSelected() {
     if (!sessionUser) return
-    const selected = products.filter((product) => selectedProducts[product.id] !== undefined)
+    const selected = visibleProducts.filter((product) => selectedProducts[product.id] !== undefined)
     if (selected.length === 0) return
     const failures: string[] = []
     for (const product of selected) {
@@ -643,7 +739,7 @@ function App() {
   }
 
   async function copyProducts() {
-    const text = products.map((product) =>
+    const text = groupProducts.map((product) =>
       `- ${product.product_name} : ${product.quantity} ${product.quantity_unit}${product.expiration_date ? ` (péremption : ${product.expiration_date})` : ''}${product.nutriscore ? ` — Nutri-Score ${product.nutriscore.toUpperCase()}` : ''}`,
     ).join('\n')
     try {
@@ -656,13 +752,14 @@ function App() {
 
   async function addMeal(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!sessionUser) return
+    if (!sessionUser || !creationZoneId) return
     setSavingMeal(true)
     const { error } = await supabase.from('meals').insert({
       name: mealName.trim(),
       planned_for: mealDate || null,
       notes: mealNotes.trim() || null,
       created_by: sessionUser.id,
+      zone_id: creationZoneId,
     })
     if (error) {
       setNotice({ type: 'error', text: `Ajout du repas impossible : ${error.message}` })
@@ -692,6 +789,7 @@ function App() {
     setEditingEventId(null)
     setCalendarEventTitle('')
     setCalendarEventDescription('')
+    setCalendarEventColor('#4F7548')
     setCalendarEventStart(startValue)
     setCalendarEventEnd(toLocalDateTime(end))
     setCalendarEventAllDay(allDay)
@@ -704,6 +802,7 @@ function App() {
     setEditingEventId(event.id)
     setCalendarEventTitle(event.title)
     setCalendarEventDescription(event.description ?? '')
+    setCalendarEventColor(event.color)
     setCalendarEventStart(event.all_day ? `${event.starts_at.slice(0, 10)}T09:00` : toLocalDateTime(start))
     setCalendarEventEnd(event.all_day
       ? `${addDaysToDate(event.ends_at.slice(0, 10), -1)}T10:00`
@@ -714,7 +813,7 @@ function App() {
 
   async function saveCalendarEvent(formEvent: FormEvent<HTMLFormElement>) {
     formEvent.preventDefault()
-    if (!sessionUser) return
+    if (!sessionUser || (!editingEventId && !creationZoneId)) return
     const startValue = calendarEventStart.slice(0, 16)
     const endValue = calendarEventEnd.slice(0, 16)
     const startDate = new Date(startValue)
@@ -751,10 +850,11 @@ function App() {
       starts_at: startsAt,
       ends_at: endsAt,
       all_day: calendarEventAllDay,
+      color: calendarEventColor,
     }
     const result = editingEventId
       ? await supabase.from('calendar_events').update(values).eq('id', editingEventId)
-      : await supabase.from('calendar_events').insert({ ...values, created_by: sessionUser.id })
+      : await supabase.from('calendar_events').insert({ ...values, created_by: sessionUser.id, zone_id: creationZoneId })
     if (result.error) {
       setNotice({ type: 'error', text: `Enregistrement de l’événement impossible : ${result.error.message}` })
     } else {
@@ -808,7 +908,7 @@ function App() {
       'VERSION:2.0',
       'PRODID:-//NutriScan//Calendrier//FR',
       'CALSCALE:GREGORIAN',
-      ...calendarEvents.flatMap((event) => [
+      ...groupCalendarEvents.flatMap((event) => [
         'BEGIN:VEVENT',
         `UID:${event.id}@nutriscan`,
         `DTSTAMP:${icsDateTime(event.created_at)}`,
@@ -819,6 +919,7 @@ function App() {
           ? `DTEND;VALUE=DATE:${event.ends_at.slice(0, 10).replace(/-/g, '')}`
           : `DTEND:${icsDateTime(event.ends_at)}`,
         `SUMMARY:${escapeIcsText(event.title)}`,
+        `COLOR:${event.color}`,
         ...(event.description ? [`DESCRIPTION:${escapeIcsText(event.description)}`] : []),
         'END:VEVENT',
       ]),
@@ -831,7 +932,7 @@ function App() {
     link.download = 'nutriscan-calendrier.ics'
     link.click()
     window.setTimeout(() => URL.revokeObjectURL(url), 1000)
-    setNotice({ type: 'success', text: `${calendarEvents.length} événement(s) exporté(s) au format iCalendar.` })
+    setNotice({ type: 'success', text: `${groupCalendarEvents.length} événement(s) exporté(s) au format iCalendar.` })
   }
 
   async function importCalendarFile(formEvent: ChangeEvent<HTMLInputElement>) {
@@ -842,7 +943,7 @@ function App() {
       setNotice({ type: 'error', text: 'Le fichier .ics dépasse la taille maximale de 10 Mo.' })
       return
     }
-    if (!sessionUser) return
+    if (!sessionUser || !creationZoneId) return
 
     setImportingCalendar(true)
     try {
@@ -878,6 +979,8 @@ function App() {
           starts_at: startsAt,
           ends_at: endsAt,
           all_day: allDay,
+          color: '#4F7548',
+          zone_id: creationZoneId,
           created_by: sessionUser.id,
         })
       }
@@ -912,11 +1015,17 @@ function App() {
     setScannerOpen(true)
   }
 
-  const visibleProducts = products.filter((product) => {
+  const inSelectedZone = <T extends { zone_id: string }>(items: T[]) =>
+    activeZoneId ? items.filter((item) => item.zone_id === activeZoneId) : items
+  const groupProducts = inSelectedZone(products)
+  const groupShoppingItems = inSelectedZone(shoppingItems)
+  const groupMeals = inSelectedZone(meals)
+  const groupCalendarEvents = inSelectedZone(calendarEvents)
+  const visibleProducts = groupProducts.filter((product) => {
     const query = search.trim().toLocaleLowerCase('fr')
     return !query || `${product.product_name} ${product.brand ?? ''} ${product.category ?? ''} ${product.barcode}`.toLocaleLowerCase('fr').includes(query)
   })
-  const gradedProducts = products.filter((product) => product.nutriscore)
+  const gradedProducts = groupProducts.filter((product) => product.nutriscore)
   const healthyProducts = gradedProducts.filter((product) => product.nutriscore === 'a' || product.nutriscore === 'b').length
 
   if (!isSupabaseConfigured) {
@@ -989,10 +1098,10 @@ function App() {
         <div className="workspace-label">ESPACE PARTAGÉ</div>
         <div className="workspace-card"><div className="workspace-icon">⌂</div><div><strong>Ma liste commune</strong><span>{profile.role === 'admin' ? 'Administrateur' : 'Membre approuvé'}</span></div><span className="online-dot" /></div>
         <nav className="side-nav" aria-label="Navigation principale">
-          <button className={`nav-item ${activeTab === 'products' ? 'active' : ''}`} onClick={() => setActiveTab('products')}><span className="nav-icon">▦</span>Ma liste<span className="nav-count">{products.length}</span></button>
-          <button className={`nav-item ${activeTab === 'shopping' ? 'active' : ''}`} onClick={() => setActiveTab('shopping')}><span className="nav-icon">✓</span>Courses<span className="nav-count">{shoppingItems.filter((item) => !item.is_checked).length}</span></button>
-          <button className={`nav-item ${activeTab === 'meals' ? 'active' : ''}`} onClick={() => setActiveTab('meals')}><span className="nav-icon">◷</span>Repas<span className="nav-count">{meals.length}</span></button>
-          <button className={`nav-item ${activeTab === 'calendar' ? 'active' : ''}`} onClick={() => setActiveTab('calendar')}><span className="nav-icon">▦</span>Calendrier<span className="nav-count">{calendarEvents.length}</span></button>
+          <button className={`nav-item ${activeTab === 'products' ? 'active' : ''}`} onClick={() => setActiveTab('products')}><span className="nav-icon">▦</span>Ma liste<span className="nav-count">{groupProducts.length}</span></button>
+          <button className={`nav-item ${activeTab === 'shopping' ? 'active' : ''}`} onClick={() => setActiveTab('shopping')}><span className="nav-icon">✓</span>Courses<span className="nav-count">{groupShoppingItems.filter((item) => !item.is_checked).length}</span></button>
+          <button className={`nav-item ${activeTab === 'meals' ? 'active' : ''}`} onClick={() => setActiveTab('meals')}><span className="nav-icon">◷</span>Repas<span className="nav-count">{groupMeals.length}</span></button>
+          <button className={`nav-item ${activeTab === 'calendar' ? 'active' : ''}`} onClick={() => setActiveTab('calendar')}><span className="nav-icon">▦</span>Calendrier<span className="nav-count">{groupCalendarEvents.length}</span></button>
           {profile.role === 'admin' && <button className={`nav-item ${activeTab === 'members' ? 'active' : ''}`} onClick={() => setActiveTab('members')}><span className="nav-icon">♙</span>Membres{pendingUsers.length > 0 && <span className="nav-count nav-alert">{pendingUsers.length}</span>}</button>}
         </nav>
         <div className="sidebar-bottom">
@@ -1002,21 +1111,38 @@ function App() {
       </aside>
 
       <main className="main-content">
-        <header className="topbar"><div className="breadcrumb">Mon espace <span>/</span> <strong>{activeTab === 'products' ? 'Ma liste' : activeTab === 'shopping' ? 'Liste de courses' : activeTab === 'meals' ? 'Repas' : activeTab === 'calendar' ? 'Calendrier' : 'Membres'}</strong></div><div className="topbar-right"><span className="sync-indicator"><i /> Espace partagé en direct</span><div className="topbar-avatar">{(profile.full_name || 'M').slice(0, 1).toUpperCase()}</div></div></header>
+        <header className="topbar"><div className="breadcrumb">Mon espace <span>/</span> <strong>{activeTab === 'products' ? 'Ma liste' : activeTab === 'shopping' ? 'Liste de courses' : activeTab === 'meals' ? 'Repas' : activeTab === 'calendar' ? 'Calendrier' : 'Membres'}</strong></div><div className="topbar-right">
+          <div className="group-switcher">
+            <label htmlFor="display-zone">AFFICHER LES DONNÉES DE</label>
+            <select id="display-zone"             value={activeZoneId ?? ''} onChange={(event) => setSelectedZoneId(event.target.value || null)} disabled={zones.length === 0}>
+              <option value="">Tous mes groupes</option>
+              {zones.map((zone) => <option value={zone.id} key={zone.id}>{zone.name}</option>)}
+            </select>
+          </div>
+          {activeZoneId === null && zones.length > 1 && (
+            <div className="group-switcher">
+              <label htmlFor="write-zone">NOUVEAUX ÉLÉMENTS DANS</label>
+              <select id="write-zone" value={effectiveWriteZoneId} onChange={(event) => setWriteZoneId(event.target.value)}>
+                {zones.map((zone) => <option value={zone.id} key={zone.id}>{zone.name}</option>)}
+              </select>
+            </div>
+          )}
+          <span className="sync-indicator"><i /> Espace partagé en direct</span><div className="topbar-avatar">{(profile.full_name || 'M').slice(0, 1).toUpperCase()}</div>
+        </div></header>
         <div className="content-wrap">
           <NoticeView notice={notice} />
           {activeTab === 'products' ? (
             <>
               <section className="page-heading"><div><span className="eyebrow">VOTRE PANIER COLLECTIF</span><h1>La liste des courses<span className="heading-period">.</span></h1><p>Les bons produits, les bonnes infos, au même endroit.</p></div><div className="heading-actions"><button className="button button-secondary" onClick={() => { setManualOpen(true); setNotice(null) }}>＋ Ajouter manuellement</button><button className="button button-primary add-button" onClick={openScanner}><span className="scan-icon">▣</span>Scanner<span className="button-arrow">↗</span></button></div></section>
               <section className="stats-grid" aria-label="Résumé de la liste">
-                <StatCard label="Produits dans la liste" value={products.length.toString().padStart(2, '0')} caption="références en stock partagé" icon="▦" tone="green" />
+                <StatCard label="Produits dans la liste" value={groupProducts.length.toString().padStart(2, '0')} caption="références en stock partagé" icon="▦" tone="green" />
                 <StatCard label="Mieux notés · A ou B" value={`${healthyProducts}/${gradedProducts.length}`} caption="selon le Nutri-Score" icon="✳" tone="blue" />
                 <StatCard label={profile.role === 'admin' ? 'Demandes d’accès' : 'Espace partagé'} value={profile.role === 'admin' ? `${pendingUsers.length}` : '✓'} caption={profile.role === 'admin' ? 'à valider par vous' : 'vous y avez accès'} icon="♙" tone="peach" />
               </section>
               <section className="list-section">
-                <div className="list-toolbar"><div><h2>Vos produits <span className="subtle-count">{products.length}</span></h2><p>Mis à jour par les membres de votre groupe.</p></div><div className="list-actions"><button className="button button-secondary" onClick={() => void copyProducts()}>Copier toute la liste</button><label className="search-box"><span>⌕</span><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Rechercher un produit…" /></label></div></div>
-                {Object.keys(selectedProducts).length > 0 && <div className="consume-bar"><span>{Object.keys(selectedProducts).length} produit(s) sélectionné(s) — saisissez la quantité consommée dans chaque ligne.</span><button className="button button-primary" onClick={() => void consumeSelected()}>Enregistrer la consommation</button><button className="text-button" onClick={() => setSelectedProducts({})}>Annuler</button></div>}
-                {products.length === 0 ? <EmptyState onScan={openScanner} /> : visibleProducts.length === 0 ? <div className="empty-filter">Aucun produit ne correspond à « {search} ».</div> : (
+                <div className="list-toolbar"><div><h2>Vos produits <span className="subtle-count">{groupProducts.length}</span></h2><p>Mis à jour par les membres de votre groupe.</p></div><div className="list-actions"><button className="button button-secondary" onClick={() => void copyProducts()}>Copier toute la liste</button><label className="search-box"><span>⌕</span><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Rechercher un produit…" /></label></div></div>
+                {Object.keys(selectedProducts).some((id) => visibleProducts.some((product) => product.id === id)) && <div className="consume-bar"><span>{visibleProducts.filter((product) => selectedProducts[product.id] !== undefined).length} produit(s) sélectionné(s) — saisissez la quantité consommée dans chaque ligne.</span><button className="button button-primary" onClick={() => void consumeSelected()}>Enregistrer la consommation</button><button className="text-button" onClick={() => setSelectedProducts({})}>Annuler</button></div>}
+                {groupProducts.length === 0 ? <EmptyState onScan={openScanner} /> : visibleProducts.length === 0 ? <div className="empty-filter">Aucun produit ne correspond à « {search} ».</div> : (
                   <div className="product-table-wrap"><table className="product-table"><thead><tr><th>CONSOMMÉ</th><th>PRODUIT</th><th>CATÉGORIE</th><th>NUTRI-SCORE</th><th>STOCK</th><th>AJUSTEMENT</th></tr></thead><tbody>
                     {visibleProducts.map((product) => <ProductRow key={product.id} product={product} selected={selectedProducts[product.id] !== undefined} consumeAmount={selectedProducts[product.id] ?? 1} onSelect={(checked) => setSelectedProducts((current) => { const next = { ...current }; if (checked) next[product.id] = 1; else delete next[product.id]; return next })} onConsumeAmount={(amount) => setSelectedProducts((current) => ({ ...current, [product.id]: amount }))} onQuantity={(delta) => void changeQuantity(product, delta)} />)}
                   </tbody></table></div>
@@ -1043,23 +1169,23 @@ function App() {
                   maxLength={120}
                   required
                 />
-                <button className="button button-primary" type="submit" disabled={addingShoppingItem || !shoppingItemName.trim()}>
+                <button className="button button-primary" type="submit" disabled={addingShoppingItem || !shoppingItemName.trim() || !creationZoneId}>
                   {addingShoppingItem ? 'Ajout…' : '＋ Ajouter'}
                 </button>
               </form>
               <div className="shopping-list-panel">
                 <div className="shopping-list-heading">
                   <div>
-                    <h2>À acheter <span className="subtle-count">{shoppingItems.filter((item) => !item.is_checked).length}</span></h2>
+                    <h2>À acheter <span className="subtle-count">{groupShoppingItems.filter((item) => !item.is_checked).length}</span></h2>
                     <p>La liste est partagée avec tous les membres.</p>
                   </div>
-                  {shoppingItems.some((item) => item.is_checked) && (
+                  {groupShoppingItems.some((item) => item.is_checked) && (
                     <button className="text-button" type="button" onClick={() => void clearCheckedShoppingItems()}>
                       Effacer les articles cochés
                     </button>
                   )}
                 </div>
-                {shoppingItems.length === 0 ? (
+                {groupShoppingItems.length === 0 ? (
                   <div className="no-pending">
                     <span>✓</span>
                     <strong>La liste est vide.</strong>
@@ -1067,7 +1193,7 @@ function App() {
                   </div>
                 ) : (
                   <ul className="shopping-items">
-                    {shoppingItems.map((item) => (
+                    {groupShoppingItems.map((item) => (
                       <li className={`shopping-item ${item.is_checked ? 'checked' : ''}`} key={item.id}>
                         <label>
                           <input
@@ -1098,9 +1224,9 @@ function App() {
                 <label>Nom du repas<input value={mealName} onChange={(event) => setMealName(event.target.value)} placeholder="Ex. soupe de légumes" required maxLength={120} /></label>
                 <label>Date prévue<input type="date" value={mealDate} onChange={(event) => setMealDate(event.target.value)} /></label>
                 <label className="meal-notes">Notes<textarea value={mealNotes} onChange={(event) => setMealNotes(event.target.value)} placeholder="Idées, préparation…" maxLength={500} /></label>
-                <button className="button button-primary" disabled={savingMeal}>{savingMeal ? 'Ajout…' : 'Ajouter au planning'}</button>
+                <button className="button button-primary" disabled={savingMeal || !creationZoneId}>{savingMeal ? 'Ajout…' : 'Ajouter au planning'}</button>
               </form>
-              <div className="meal-list"><h2>Planning commun <span className="subtle-count">{meals.length}</span></h2>{meals.length === 0 ? <div className="empty-filter">Aucun repas planifié pour le moment.</div> : meals.map((meal) => <article className="meal-card" key={meal.id}><div className="meal-date">{meal.planned_for ? new Date(`${meal.planned_for}T12:00:00`).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) : '—'}</div><div className="meal-details"><strong>{meal.name}</strong>{meal.planned_for && <span>{new Date(`${meal.planned_for}T12:00:00`).toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span>}{meal.notes && <p>{meal.notes}</p>}</div><button className="text-button" onClick={() => void deleteMeal(meal)}>Supprimer</button></article>)}</div>
+              <div className="meal-list"><h2>Planning commun <span className="subtle-count">{groupMeals.length}</span></h2>{groupMeals.length === 0 ? <div className="empty-filter">Aucun repas planifié pour le moment.</div> : groupMeals.map((meal) => <article className="meal-card" key={meal.id}><div className="meal-date">{meal.planned_for ? new Date(`${meal.planned_for}T12:00:00`).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) : '—'}</div><div className="meal-details"><strong>{meal.name}</strong>{meal.planned_for && <span>{new Date(`${meal.planned_for}T12:00:00`).toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span>}{meal.notes && <p>{meal.notes}</p>}</div><button className="text-button" onClick={() => void deleteMeal(meal)}>Supprimer</button></article>)}</div>
             </section>
           ) : activeTab === 'calendar' ? (
             <section className="calendar-section">
@@ -1129,25 +1255,25 @@ function App() {
                       <button
                         className="button button-secondary"
                         type="button"
-                        disabled={calendarEvents.length === 0}
+                        disabled={groupCalendarEvents.length === 0}
                         onClick={exportCalendar}
                       >Exporter .ics</button>
-                      <button className="button button-primary" type="button" onClick={() => openCalendarEvent()}>＋ Événement</button>
+                      <button className="button button-primary" type="button" disabled={!creationZoneId} onClick={() => openCalendarEvent()}>＋ Événement</button>
                     </div>
                   </div>
-                  <div className="calendar-event-count">{calendarEvents.length} événement(s) partagé(s)</div>
+                  <div className="calendar-event-count">{groupCalendarEvents.length} événement(s) partagé(s)</div>
                   <Suspense fallback={<div className="meal-calendar calendar-loading">Chargement du calendrier…</div>}>
                     <SharedCalendar
-                      events={calendarEvents}
+                      events={groupCalendarEvents}
                       onDateClick={(date, allDay) => openCalendarEvent(date, allDay)}
                       onEventClick={(id) => {
-                        const event = calendarEvents.find((item) => item.id === id)
+                        const event = groupCalendarEvents.find((item) => item.id === id)
                         if (event) editCalendarEvent(event)
                       }}
                       onMove={(event, revert) => void moveCalendarEvent(event, revert)}
                     />
                   </Suspense>
-                  {calendarEvents.length === 0 && (
+                  {groupCalendarEvents.length === 0 && (
                     <p className="calendar-empty-hint">Cliquez sur une date ou sur « Événement » pour ajouter le premier rendez-vous.</p>
                   )}
             </section>
@@ -1157,7 +1283,27 @@ function App() {
                 <div>
                   <span className="eyebrow">GESTION DE L’ESPACE</span>
                   <h1>Les membres<span className="heading-period">.</span></h1>
-                  <p>Consultez les comptes autorisés, leur dernière connexion et gérez leurs accès.</p>
+                  <p>Gérez les groupes, les accès de chaque membre et leur dernière connexion.</p>
+                </div>
+              </div>
+              <div className="member-panel">
+                <div className="member-panel-heading">
+                  <div><h2>Groupes</h2><p>Les données sont visibles uniquement par les membres de chaque groupe.</p></div>
+                  <span className="pending-pill">{zones.length} groupe(s)</span>
+                </div>
+                <form className="group-create-form" onSubmit={(event) => void createZone(event)}>
+                  <label htmlFor="new-zone-name">Nom du nouveau groupe</label>
+                  <input id="new-zone-name" value={newZoneName} onChange={(event) => setNewZoneName(event.target.value)} placeholder="Ex. Famille, Colocation…" required maxLength={80} />
+                  <button className="button button-primary" type="submit" disabled={savingZone || !newZoneName.trim()}>{savingZone ? 'Création…' : 'Créer le groupe'}</button>
+                </form>
+                <div className="group-edit-list">
+                  {zones.map((zone) => (
+                    <form className="group-edit-row" key={zone.id} onSubmit={(event) => { event.preventDefault(); void renameZone(zone) }}>
+                      <label htmlFor={`zone-name-${zone.id}`}>Nom du groupe</label>
+                      <input id={`zone-name-${zone.id}`} value={zoneNameEdits[zone.id] ?? zone.name} onChange={(event) => setZoneNameEdits((current) => ({ ...current, [zone.id]: event.target.value }))} maxLength={80} required />
+                      <button className="button button-secondary" type="submit" disabled={(zoneNameEdits[zone.id] ?? zone.name).trim() === zone.name}>Renommer</button>
+                    </form>
+                  ))}
                 </div>
               </div>
               <div className="member-panel">
@@ -1190,6 +1336,22 @@ function App() {
                               disabled={revokingUserId === user.id}
                               onClick={() => void revokeUser(user)}
                             >{revokingUserId === user.id ? 'Révocation…' : 'Révoquer l’accès'}</button>}
+                        {zones.length > 0 && (
+                          <details className="member-groups">
+                            <summary>Groupes ({zoneMemberships.filter((item) => item.user_id === user.id).length})</summary>
+                            <div className="member-group-options">
+                              {zones.map((zone) => {
+                                const isMember = zoneMemberships.some((item) => item.zone_id === zone.id && item.user_id === user.id)
+                                return (
+                                  <label key={zone.id}>
+                                    <input type="checkbox" checked={isMember} onChange={(event) => void changeZoneMembership(user, zone, event.target.checked)} />
+                                    {zone.name}
+                                  </label>
+                                )
+                              })}
+                            </div>
+                          </details>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -1273,6 +1435,7 @@ function App() {
                 onChange={(event) => setCalendarEventEnd(calendarEventAllDay ? `${event.target.value}T10:00` : event.target.value)}
                 required
               /></label>
+              <label className="calendar-color-field">Couleur de l’événement<input type="color" value={calendarEventColor} onChange={(event) => setCalendarEventColor(event.target.value)} /></label>
               <label className="calendar-description">Description<textarea
                 value={calendarEventDescription}
                 onChange={(event) => setCalendarEventDescription(event.target.value)}

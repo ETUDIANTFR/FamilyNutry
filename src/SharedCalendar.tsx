@@ -13,6 +13,14 @@ export type CalendarEventMove = {
   allDay: boolean
 }
 
+function eventTextColor(color: string) {
+  const channels = [1, 3, 5].map((offset) => Number.parseInt(color.slice(offset, offset + 2), 16) / 255)
+  const luminance = channels
+    .map((channel) => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4)
+    .reduce((total, channel, index) => total + channel * [0.2126, 0.7152, 0.0722][index], 0)
+  return luminance > 0.179 ? '#20271f' : '#ffffff'
+}
+
 type SharedCalendarProps = {
   events: CalendarEvent[]
   onDateClick: (date: Date, allDay: boolean) => void
@@ -46,6 +54,9 @@ export default function SharedCalendar({
           start: event.all_day ? event.starts_at.slice(0, 10) : event.starts_at,
           end: event.all_day ? event.ends_at.slice(0, 10) : event.ends_at,
           allDay: event.all_day,
+          backgroundColor: event.color,
+          borderColor: event.color,
+          textColor: eventTextColor(event.color),
           extendedProps: { description: event.description },
         }))}
         dateClick={(info) => onDateClick(info.date, info.allDay)}

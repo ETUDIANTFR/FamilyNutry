@@ -27,6 +27,7 @@ export type Product = {
   updated_by: string
   created_at: string
   updated_at: string
+  zone_id: string
 }
 
 export type Meal = {
@@ -36,6 +37,7 @@ export type Meal = {
   notes: string | null
   created_by: string
   created_at: string
+  zone_id: string
 }
 
 export type CalendarEvent = {
@@ -47,6 +49,8 @@ export type CalendarEvent = {
   all_day: boolean
   created_by: string
   created_at: string
+  zone_id: string
+  color: string
 }
 
 export type ShoppingListItem = {
@@ -54,6 +58,20 @@ export type ShoppingListItem = {
   name: string
   is_checked: boolean
   created_by: string
+  created_at: string
+  zone_id: string
+}
+
+export type Zone = {
+  id: string
+  name: string
+  created_by: string | null
+  created_at: string
+}
+
+export type ZoneMembership = {
+  zone_id: string
+  user_id: string
   created_at: string
 }
 
@@ -72,6 +90,8 @@ type Database = {
       meals: Table<Meal, Omit<Meal, 'id' | 'created_at'> & Partial<Pick<Meal, 'id' | 'created_at'>>>
       calendar_events: Table<CalendarEvent, Omit<CalendarEvent, 'id' | 'created_at'> & Partial<Pick<CalendarEvent, 'id' | 'created_at'>>>
       shopping_list_items: Table<ShoppingListItem, Omit<ShoppingListItem, 'id' | 'created_at'> & Partial<Pick<ShoppingListItem, 'id' | 'created_at'>>>
+      zones: Table<Zone, Pick<Zone, 'name'> & Partial<Pick<Zone, 'id' | 'created_by' | 'created_at'>>>
+      zone_members: Table<ZoneMembership, Pick<ZoneMembership, 'zone_id' | 'user_id'> & Partial<Pick<ZoneMembership, 'created_at'>>>
     }
     Views: Record<string, never>
     Functions: {
