@@ -23,6 +23,8 @@ function eventTextColor(color: string) {
 
 type SharedCalendarProps = {
   events: CalendarEvent[]
+  zoneNames: Record<string, string>
+  showGroupNames: boolean
   onDateClick: (date: Date, allDay: boolean) => void
   onEventClick: (id: string) => void
   onMove: (event: CalendarEventMove, revert: () => void) => void
@@ -30,6 +32,8 @@ type SharedCalendarProps = {
 
 export default function SharedCalendar({
   events,
+  zoneNames,
+  showGroupNames,
   onDateClick,
   onEventClick,
   onMove,
@@ -50,7 +54,7 @@ export default function SharedCalendar({
         buttonText={{ today: 'Aujourd’hui', month: 'Mois', week: 'Semaine', day: 'Jour', list: 'Agenda' }}
         events={events.map((event) => ({
           id: event.id,
-          title: event.title,
+          title: showGroupNames ? `${zoneNames[event.zone_id] ?? 'Groupe'} · ${event.title}` : event.title,
           start: event.all_day ? event.starts_at.slice(0, 10) : event.starts_at,
           end: event.all_day ? event.ends_at.slice(0, 10) : event.ends_at,
           allDay: event.all_day,

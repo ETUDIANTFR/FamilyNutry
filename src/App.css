@@ -781,6 +781,24 @@
   box-shadow: 0 0 0 1px #e5e9e0;
 }
 
+.theme-toggle {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid #e5e9e0;
+  border-radius: 8px;
+  color: #53624f;
+  background: #fff;
+  font-size: 17px;
+}
+
+.theme-toggle:hover {
+  color: var(--green-dark);
+  background: #f3f7f0;
+}
+
 .content-wrap {
   width: min(1120px, 100%);
   min-height: calc(100vh - 112px);
@@ -1054,6 +1072,21 @@
   color: #999f96;
   font-size: 9px;
   text-overflow: ellipsis;
+}
+
+.group-badge {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  align-items: center;
+  padding: 3px 7px;
+  border: 1px solid #dce8d7;
+  border-radius: 999px;
+  color: #426b3d !important;
+  background: #eff6eb;
+  font-size: 9px !important;
+  font-weight: 700;
+  line-height: 1.3;
 }
 
 .category-label {
@@ -1502,6 +1535,11 @@
   font-size: 10px;
 }
 
+.shared-calendar .fc .fc-event-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .meal-calendar .fc .fc-daygrid-day-frame {
   min-height: 88px;
 }
@@ -1846,11 +1884,15 @@
 }
 
 .member-panel {
-  overflow: hidden;
+  position: relative;
   margin-bottom: 16px;
   border: 1px solid #e8ece5;
   border-radius: 9px;
   background: #fff;
+}
+
+.member-panel:has(.member-groups[open]) {
+  z-index: 5;
 }
 
 .member-panel-heading {
@@ -1914,6 +1956,7 @@
 }
 
 .pending-member {
+  position: relative;
   display: flex;
   min-height: 68px;
   align-items: center;
@@ -1923,6 +1966,10 @@
 
 .pending-member:last-child {
   border-bottom: 0;
+}
+
+.pending-member:has(.member-groups[open]) {
+  z-index: 6;
 }
 
 .member-groups {
@@ -1938,7 +1985,7 @@
 
 .member-group-options {
   position: absolute;
-  z-index: 2;
+  z-index: 7;
   top: calc(100% + 6px);
   right: 0;
   display: grid;
@@ -1949,6 +1996,11 @@
   border-radius: 6px;
   background: #fff;
   box-shadow: 0 8px 20px rgba(35, 47, 33, 0.12);
+}
+
+.pending-member:last-child .member-groups[open] .member-group-options {
+  top: auto;
+  bottom: calc(100% + 6px);
 }
 
 .member-group-options label {
@@ -2341,11 +2393,11 @@
     right: 0;
     bottom: 0;
     width: auto;
-    height: 61px;
+    height: calc(65px + env(safe-area-inset-bottom));
     flex-direction: row;
     align-items: center;
     justify-content: center;
-    padding: 6px 14px;
+    padding: 6px 10px calc(6px + env(safe-area-inset-bottom));
     border-top: 1px solid #e9ece6;
     border-right: 0;
     background: rgba(255, 255, 255, 0.97);
@@ -2360,19 +2412,21 @@
 
   .side-nav {
     display: flex;
-    width: min(420px, 100%);
+    width: 100%;
+    max-width: 520px;
     justify-content: center;
-    gap: 9px;
+    gap: 4px;
     margin: 0;
   }
 
   .nav-item {
     min-width: 0;
     flex: 1;
+    min-height: 48px;
     justify-content: center;
-    gap: 4px;
-    padding: 0 4px;
-    font-size: 10px;
+    gap: 3px;
+    padding: 0 2px;
+    font-size: 9px;
   }
 
   .nav-icon {
@@ -2392,12 +2446,13 @@
 
   .main-content {
     margin-left: 0;
-    padding-bottom: 61px;
+    padding-bottom: calc(65px + env(safe-area-inset-bottom));
   }
 
   .topbar {
-    height: 53px;
-    padding: 0 19px;
+    min-height: 58px;
+    height: auto;
+    padding: 7px 14px;
   }
 
   .breadcrumb {
@@ -2405,6 +2460,9 @@
   }
 
   .topbar-right {
+    min-width: 0;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     gap: 8px;
   }
 
@@ -2421,14 +2479,19 @@
   }
 
   .group-switcher select {
-    min-height: 31px;
-    max-width: 135px;
-    font-size: 9px;
+    min-height: 40px;
+    max-width: min(42vw, 180px);
+    font-size: 11px;
+  }
+
+  .theme-toggle {
+    width: 40px;
+    height: 40px;
   }
 
   .content-wrap {
-    min-height: calc(100vh - 126px);
-    padding: 31px 19px 28px;
+    min-height: calc(100vh - 123px);
+    padding: 25px 16px 28px;
   }
 
   .page-heading h1 {
@@ -2502,12 +2565,26 @@
 
   .group-create-form,
   .group-edit-row {
-    grid-template-columns: 1fr auto;
+    grid-template-columns: minmax(0, 1fr);
+    padding: 14px 16px;
   }
 
   .group-create-form > label,
   .group-edit-row > label {
-    grid-column: 1 / -1;
+    grid-column: 1;
+  }
+
+  .group-create-form .button,
+  .group-edit-row .button {
+    width: 100%;
+    min-height: 42px;
+    font-size: 12px;
+  }
+
+  .group-create-form input,
+  .group-edit-row input {
+    min-height: 44px;
+    font-size: 16px;
   }
 
   .shopping-add-form {
@@ -2596,6 +2673,81 @@
     padding: 12px 19px;
     font-size: 8px;
   }
+
+  .pending-list {
+    padding: 0 14px;
+  }
+
+  .pending-member {
+    display: grid;
+    grid-template-columns: 36px minmax(0, 1fr);
+    align-items: start;
+    gap: 9px 10px;
+    padding: 14px 0;
+  }
+
+  .pending-member .avatar {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+
+  .pending-member .member-info {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .pending-member .member-date,
+  .pending-member .role-pill,
+  .pending-member .revoke-button,
+  .pending-member .approve-button,
+  .pending-member .member-groups {
+    grid-column: 2;
+    justify-self: start;
+    margin: 0;
+  }
+
+  .pending-member .member-date {
+    font-size: 11px;
+    line-height: 1.5;
+  }
+
+  .pending-member .revoke-button,
+  .pending-member .approve-button {
+    width: 100%;
+    min-height: 42px;
+    font-size: 12px;
+  }
+
+  .member-groups {
+    width: 100%;
+    font-size: 12px;
+  }
+
+  .member-groups summary {
+    display: flex;
+    min-height: 42px;
+    align-items: center;
+  }
+
+  .member-group-options,
+  .pending-member:last-child .member-groups[open] .member-group-options {
+    position: static;
+    min-width: 0;
+    margin-top: 4px;
+    padding: 10px;
+    box-shadow: none;
+  }
+
+  .member-group-options label {
+    min-height: 38px;
+    white-space: normal;
+  }
+
+  .member-group-options input {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 auto;
+  }
 }
 
 @media (max-width: 440px) {
@@ -2658,8 +2810,7 @@
   }
 
   .pending-member {
-    flex-wrap: wrap;
-    padding: 9px 0;
+    flex-wrap: initial;
   }
 
   .member-date {
@@ -2682,5 +2833,309 @@
 
   .footer {
     flex-direction: column;
+  }
+}
+
+html[data-theme='dark'] {
+  color: #e4e9e1;
+  background: #151a16;
+}
+
+html[data-theme='dark'] .app-shell {
+  color-scheme: dark;
+  color: #e4e9e1;
+  background: #151a16;
+}
+
+html[data-theme='dark'] .sidebar,
+html[data-theme='dark'] .topbar,
+html[data-theme='dark'] .member-panel,
+html[data-theme='dark'] .list-section,
+html[data-theme='dark'] .shopping-list-panel,
+html[data-theme='dark'] .shopping-list-heading,
+html[data-theme='dark'] .meal-list,
+html[data-theme='dark'] .stat-card,
+html[data-theme='dark'] .scanner-modal {
+  border-color: #303a31;
+  background-color: #1e261f;
+}
+
+html[data-theme='dark'] .topbar {
+  background-color: rgba(30, 38, 31, 0.95);
+}
+
+html[data-theme='dark'] .sidebar {
+  border-right-color: #303a31;
+}
+
+html[data-theme='dark'] .topbar {
+  border-bottom-color: #303a31;
+}
+
+html[data-theme='dark'] .workspace-card,
+html[data-theme='dark'] .sidebar-help,
+html[data-theme='dark'] .search-box,
+html[data-theme='dark'] .group-switcher select,
+html[data-theme='dark'] .member-group-options,
+html[data-theme='dark'] .preview-card,
+html[data-theme='dark'] .shopping-add-form,
+html[data-theme='dark'] .meal-form,
+html[data-theme='dark'] .member-panel input:not([type='checkbox']),
+html[data-theme='dark'] .product-entry-fields input,
+html[data-theme='dark'] .product-entry-fields select,
+html[data-theme='dark'] .manual-form input,
+html[data-theme='dark'] .manual-form select,
+html[data-theme='dark'] .manual-form textarea,
+html[data-theme='dark'] .meal-form input,
+html[data-theme='dark'] .meal-form textarea,
+html[data-theme='dark'] .shopping-add-form input,
+html[data-theme='dark'] .calendar-event-form input:not([type='checkbox']):not([type='color']),
+html[data-theme='dark'] .calendar-event-form textarea,
+html[data-theme='dark'] .consume-amount,
+html[data-theme='dark'] .quantity-control {
+  border-color: #3a463b;
+  color: #e4e9e1;
+  background-color: #252f26;
+}
+
+html[data-theme='dark'] .search-box input,
+html[data-theme='dark'] .shopping-add-form input,
+html[data-theme='dark'] .meal-form input,
+html[data-theme='dark'] .meal-form textarea,
+html[data-theme='dark'] .product-entry-fields input,
+html[data-theme='dark'] .product-entry-fields select {
+  color: #e4e9e1;
+}
+
+html[data-theme='dark'] input::placeholder,
+html[data-theme='dark'] textarea::placeholder {
+  color: #9ba69a;
+}
+
+html[data-theme='dark'] .nav-item:hover,
+html[data-theme='dark'] .theme-toggle:hover {
+  background-color: #273329;
+}
+
+html[data-theme='dark'] .nav-item.active {
+  color: #c4e0bd;
+  background-color: #2a3b2c;
+}
+
+html[data-theme='dark'] .theme-toggle {
+  border-color: #3a463b;
+  color: #e6d28b;
+  background-color: #252f26;
+}
+
+html[data-theme='dark'] .group-switcher select,
+html[data-theme='dark'] .button-secondary,
+html[data-theme='dark'] .sidebar-help button {
+  color: #c4dfbd;
+  background-color: #252f26;
+}
+
+html[data-theme='dark'] .button-secondary {
+  border-color: #405244;
+}
+
+html[data-theme='dark'] .button-secondary:hover,
+html[data-theme='dark'] .sidebar-help button:hover {
+  background-color: #2d3b2e;
+}
+
+html[data-theme='dark'] .brand,
+html[data-theme='dark'] .breadcrumb strong,
+html[data-theme='dark'] .page-heading h1,
+html[data-theme='dark'] .workspace-card strong,
+html[data-theme='dark'] .member-panel-heading h2,
+html[data-theme='dark'] .list-toolbar h2,
+html[data-theme='dark'] .meal-list h2,
+html[data-theme='dark'] .empty-state h3,
+html[data-theme='dark'] .no-pending strong,
+html[data-theme='dark'] .member-info strong,
+html[data-theme='dark'] .product-info strong,
+html[data-theme='dark'] .meal-details strong,
+html[data-theme='dark'] .stat-value,
+html[data-theme='dark'] .shopping-item label > span,
+html[data-theme='dark'] .sidebar-help strong {
+  color: #e4e9e1;
+}
+
+html[data-theme='dark'] .eyebrow,
+html[data-theme='dark'] .page-heading p,
+html[data-theme='dark'] .member-panel-heading p,
+html[data-theme='dark'] .list-toolbar p,
+html[data-theme='dark'] .breadcrumb,
+html[data-theme='dark'] .member-info span,
+html[data-theme='dark'] .member-date,
+html[data-theme='dark'] .footer,
+html[data-theme='dark'] .sidebar-help p,
+html[data-theme='dark'] .workspace-card span:not(.online-dot),
+html[data-theme='dark'] .account-details span,
+html[data-theme='dark'] .sync-indicator,
+html[data-theme='dark'] .product-table td,
+html[data-theme='dark'] .product-table th,
+html[data-theme='dark'] .product-info span,
+html[data-theme='dark'] .meal-details span,
+html[data-theme='dark'] .meal-details p,
+html[data-theme='dark'] .calendar-event-count,
+html[data-theme='dark'] .calendar-empty-hint,
+html[data-theme='dark'] .empty-state p,
+html[data-theme='dark'] .no-pending {
+  color: #a5afa3;
+}
+
+html[data-theme='dark'] .product-table thead,
+html[data-theme='dark'] .quantity-control {
+  background-color: #252f26;
+}
+
+html[data-theme='dark'] .product-table td,
+html[data-theme='dark'] .empty-state,
+html[data-theme='dark'] .empty-filter {
+  border-color: #303a31;
+}
+
+html[data-theme='dark'] .product-placeholder {
+  border-color: #3a463b;
+  color: #b5c7a8;
+  background-color: #252f26;
+}
+
+html[data-theme='dark'] .category-label {
+  color: #c1cbbd;
+  background-color: #303a31;
+}
+
+html[data-theme='dark'] .group-badge {
+  border-color: #405442;
+  color: #c4dfbd !important;
+  background-color: #2a3b2c;
+}
+
+html[data-theme='dark'] .quantity-number,
+html[data-theme='dark'] .quantity-control span,
+html[data-theme='dark'] .quantity-control button,
+html[data-theme='dark'] .member-groups {
+  color: #c4cec1;
+}
+
+html[data-theme='dark'] .meal-date,
+html[data-theme='dark'] .empty-illustration,
+html[data-theme='dark'] .no-pending > span {
+  color: #c4dfbd;
+  background-color: #2a3b2c;
+}
+
+html[data-theme='dark'] .pending-member,
+html[data-theme='dark'] .group-create-form,
+html[data-theme='dark'] .group-edit-row,
+html[data-theme='dark'] .account-row,
+html[data-theme='dark'] .shopping-item,
+html[data-theme='dark'] .meal-card {
+  border-color: #303a31;
+}
+
+html[data-theme='dark'] .member-group-options {
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+}
+
+html[data-theme='dark'] .subtle-count,
+html[data-theme='dark'] .nav-item.active .nav-icon {
+  color: #bfd3b9;
+  background-color: #303c31;
+}
+
+html[data-theme='dark'] .topbar-avatar {
+  border-color: #1e261f;
+}
+
+html[data-theme='dark'] .shopping-item.checked label > span {
+  color: #879286;
+}
+
+html[data-theme='dark'] .meal-calendar,
+html[data-theme='dark'] .meal-calendar .fc,
+html[data-theme='dark'] .shared-calendar .fc,
+html[data-theme='dark'] .shared-calendar .fc-theme-standard td,
+html[data-theme='dark'] .shared-calendar .fc-theme-standard th,
+html[data-theme='dark'] .shared-calendar .fc-theme-standard .fc-scrollgrid {
+  --fc-border-color: #3a463b;
+  --fc-neutral-bg-color: #252f26;
+  border-color: #3a463b;
+  color: #e4e9e1;
+  background-color: #1e261f;
+}
+
+html[data-theme='dark'] .shared-calendar .fc .fc-col-header-cell-cushion,
+html[data-theme='dark'] .meal-calendar .fc .fc-col-header-cell-cushion,
+html[data-theme='dark'] .meal-calendar .fc .fc-daygrid-day-number,
+html[data-theme='dark'] .shared-calendar .fc .fc-daygrid-day-number {
+  color: #c4cec1;
+}
+
+html[data-theme='dark'] .shared-calendar .fc .fc-daygrid-event {
+  color: #f4f7f2;
+}
+
+html[data-theme='dark'] .meal-calendar .fc .fc-daygrid-day.fc-day-today {
+  background-color: #29382a;
+}
+
+html[data-theme='dark'] .meal-calendar .fc .fc-toolbar-title {
+  color: #e4e9e1;
+}
+
+html[data-theme='dark'] .meal-list {
+  border: 1px solid #303a31;
+  border-radius: 9px;
+}
+
+html[data-theme='dark'] .modal-close {
+  color: #c4cec1;
+  background-color: #303a31;
+}
+
+@media (max-width: 760px) {
+  body {
+    min-width: 320px;
+  }
+
+  .sidebar {
+    border-top-color: #e9ece6;
+    padding-right: max(10px, env(safe-area-inset-right));
+    padding-left: max(10px, env(safe-area-inset-left));
+  }
+
+  .topbar-right {
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+
+  .topbar-avatar {
+    display: none;
+  }
+
+  .group-switcher {
+    min-width: 0;
+  }
+
+  .group-switcher select {
+    max-width: min(39vw, 170px);
+  }
+
+  .group-create-form input,
+  .group-edit-row input,
+  .shopping-add-form input,
+  .meal-form input,
+  .meal-form textarea,
+  .search-box input {
+    font-size: 16px;
+  }
+
+  html[data-theme='dark'] .sidebar {
+    border-top-color: #303a31;
+    background-color: rgba(30, 38, 31, 0.97);
   }
 }

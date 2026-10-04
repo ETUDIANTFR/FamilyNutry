@@ -69,6 +69,7 @@ const gradeLabels: Record<string, string> = {
 const SharedCalendar = lazy(() => import('./SharedCalendar'))
 
 function App() {
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem('nutriscan-theme') === 'dark')
   const [sessionUser, setSessionUser] = useState<{ id: string; email?: string } | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [products, setProducts] = useState<Product[]>([])
@@ -125,6 +126,11 @@ function App() {
   const [calendarEventAllDay, setCalendarEventAllDay] = useState(false)
   const [savingCalendarEvent, setSavingCalendarEvent] = useState(false)
   const [importingCalendar, setImportingCalendar] = useState(false)
+  useEffect(() => {
+    document.documentElement.dataset.theme = darkMode ? 'dark' : 'light'
+    localStorage.setItem('nutriscan-theme', darkMode ? 'dark' : 'light')
+  }, [darkMode])
+
   const activeZoneId = selectedZoneId && zones.some((zone) => zone.id === selectedZoneId) ? selectedZoneId : null
   const effectiveWriteZoneId = zones.some((zone) => zone.id === writeZoneId) ? writeZoneId : zones[0]?.id ?? ''
   const creationZoneId = activeZoneId ?? effectiveWriteZoneId
@@ -1021,6 +1027,8 @@ function App() {
   const groupShoppingItems = inSelectedZone(shoppingItems)
   const groupMeals = inSelectedZone(meals)
   const groupCalendarEvents = inSelectedZone(calendarEvents)
+  const showGroupNames = activeZoneId === null && zones.length > 1
+  const getZoneName = (zoneId: string) => zones.find((zone) => zone.id === zoneId)?.name ?? 'Groupe'
   const visibleProducts = groupProducts.filter((product) => {
     const query = search.trim().toLocaleLowerCase('fr')
     return !query || `${product.product_name} ${product.brand ?? ''} ${product.category ?? ''} ${product.barcode}`.toLocaleLowerCase('fr').includes(query)
@@ -1127,7 +1135,15 @@ function App() {
               </select>
             </div>
           )}
-          <span className="sync-indicator"><i /> Espace partagé en direct</span><div className="topbar-avatar">{(profile.full_name || 'M').slice(0, 1).toUpperCase()}</div>
+          <span className="sync-indicator"><i /> Espace partagé en direct</span>
+          <button
+            className="theme-toggle"
+            type="button"
+            onClick={() => setDarkMode((current) => !current)}
+            aria-label={darkMode ? 'Activer le thème clair' : 'Activer le thème sombre'}
+            title={darkMode ? 'Activer le thème clair' : 'Activer le thème sombre'}
+          >{darkMode ? '☀' : '☾'}</button>
+          <div className="topbar-avatar">{(profile.full_name || 'M').slice(0, 1).toUpperCase()}</div>
         </div></header>
         <div className="content-wrap">
           <NoticeView notice={notice} />
@@ -1144,7 +1160,7 @@ function App() {
                 {Object.keys(selectedProducts).some((id) => visibleProducts.some((product) => product.id === id)) && <div className="consume-bar"><span>{visibleProducts.filter((product) => selectedProducts[product.id] !== undefined).length} produit(s) sélectionné(s) — saisissez la quantité consommée dans chaque ligne.</span><button className="button button-primary" onClick={() => void consumeSelected()}>Enregistrer la consommation</button><button className="text-button" onClick={() => setSelectedProducts({})}>Annuler</button></div>}
                 {groupProducts.length === 0 ? <EmptyState onScan={openScanner} /> : visibleProducts.length === 0 ? <div className="empty-filter">Aucun produit ne correspond à « {search} ».</div> : (
                   <div className="product-table-wrap"><table className="product-table"><thead><tr><th>CONSOMMÉ</th><th>PRODUIT</th><th>CATÉGORIE</th><th>NUTRI-SCORE</th><th>STOCK</th><th>AJUSTEMENT</th></tr></thead><tbody>
-                    {visibleProducts.map((product) => <ProductRow key={product.id} product={product} selected={selectedProducts[product.id] !== undefined} consumeAmount={selectedProducts[product.id] ?? 1} onSelect={(checked) => setSelectedProducts((current) => { const next = { ...current }; if (checked) next[product.id] = 1; else delete next[product.id]; return next })} onConsumeAmount={(amount) => setSelectedProducts((current) => ({ ...current, [product.id]: amount }))} onQuantity={(delta) => void changeQuantity(product, delta)} />)}
+                    {visibleProducts.map((product) => <ProductRow key={product.id} product={product} groupName={showGroupNames ? getZoneName(product.zone_id) : undefined} selected={selectedProducts[product.id] !== undefined} consumeAmount={selectedProducts[product.id] ?? 1} onSelect={(checked) => setSelectedProducts((current) => { const next = { ...current }; if (checked) next[product.id] = 1; else delete next[product.id]; return next })} onConsumeAmount={(amount) => setSelectedProducts((current) => ({ ...current, [product.id]: amount }))} onQuantity={(delta) => void changeQuantity(product, delta)} />)}
                   </tbody></table></div>
                 )}
                 <div className="source-note"><span>ⓘ</span> Notes nutritionnelles fournies par <a href="https://world.openfoodfacts.org/" target="_blank" rel="noreferrer">Open Food Facts</a>. Le Nutri-Score ne remplace pas un avis médical.</div>
@@ -1204,6 +1220,7 @@ function App() {
                           />
                           <span>{item.name}</span>
                         </label>
+                        {showGroupNames && <span className="group-badge">{getZoneName(item.zone_id)}</span>}
                         <button
                           className="shopping-delete"
                           type="button"
@@ -1226,7 +1243,7 @@ function App() {
                 <label className="meal-notes">Notes<textarea value={mealNotes} onChange={(event) => setMealNotes(event.target.value)} placeholder="Idées, préparation…" maxLength={500} /></label>
                 <button className="button button-primary" disabled={savingMeal || !creationZoneId}>{savingMeal ? 'Ajout…' : 'Ajouter au planning'}</button>
               </form>
-              <div className="meal-list"><h2>Planning commun <span className="subtle-count">{groupMeals.length}</span></h2>{groupMeals.length === 0 ? <div className="empty-filter">Aucun repas planifié pour le moment.</div> : groupMeals.map((meal) => <article className="meal-card" key={meal.id}><div className="meal-date">{meal.planned_for ? new Date(`${meal.planned_for}T12:00:00`).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) : '—'}</div><div className="meal-details"><strong>{meal.name}</strong>{meal.planned_for && <span>{new Date(`${meal.planned_for}T12:00:00`).toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span>}{meal.notes && <p>{meal.notes}</p>}</div><button className="text-button" onClick={() => void deleteMeal(meal)}>Supprimer</button></article>)}</div>
+              <div className="meal-list"><h2>Planning commun <span className="subtle-count">{groupMeals.length}</span></h2>{groupMeals.length === 0 ? <div className="empty-filter">Aucun repas planifié pour le moment.</div> : groupMeals.map((meal) => <article className="meal-card" key={meal.id}><div className="meal-date">{meal.planned_for ? new Date(`${meal.planned_for}T12:00:00`).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) : '—'}</div><div className="meal-details"><strong>{meal.name}</strong>{meal.planned_for && <span>{new Date(`${meal.planned_for}T12:00:00`).toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span>}{meal.notes && <p>{meal.notes}</p>}{showGroupNames && <span className="group-badge">{getZoneName(meal.zone_id)}</span>}</div><button className="text-button" onClick={() => void deleteMeal(meal)}>Supprimer</button></article>)}</div>
             </section>
           ) : activeTab === 'calendar' ? (
             <section className="calendar-section">
@@ -1265,6 +1282,8 @@ function App() {
                   <Suspense fallback={<div className="meal-calendar calendar-loading">Chargement du calendrier…</div>}>
                     <SharedCalendar
                       events={groupCalendarEvents}
+                      zoneNames={Object.fromEntries(zones.map((zone) => [zone.id, zone.name]))}
+                      showGroupNames={showGroupNames}
                       onDateClick={(date, allDay) => openCalendarEvent(date, allDay)}
                       onEventClick={(id) => {
                         const event = groupCalendarEvents.find((item) => item.id === id)
@@ -1495,9 +1514,9 @@ function StatCard({ label, value, caption, icon, tone }: { label: string; value:
   return <article className="stat-card"><div className="stat-card-top"><span>{label}</span><span className={`stat-icon stat-${tone}`}>{icon}</span></div><div className="stat-value">{value}</div><div className="stat-caption">{caption}</div></article>
 }
 
-function ProductRow({ product, selected, consumeAmount, onSelect, onConsumeAmount, onQuantity }: { product: Product; selected: boolean; consumeAmount: number; onSelect: (checked: boolean) => void; onConsumeAmount: (amount: number) => void; onQuantity: (delta: number) => void }) {
+function ProductRow({ product, groupName, selected, consumeAmount, onSelect, onConsumeAmount, onQuantity }: { product: Product; groupName?: string; selected: boolean; consumeAmount: number; onSelect: (checked: boolean) => void; onConsumeAmount: (amount: number) => void; onQuantity: (delta: number) => void }) {
   const grade = product.nutriscore?.toLowerCase()
-  return <tr><td><div className="consume-select"><input type="checkbox" checked={selected} onChange={(event) => onSelect(event.target.checked)} aria-label={`Sélectionner ${product.product_name} comme consommé`} />{selected && <input className="consume-amount" type="number" min="0.001" max={product.quantity} step="0.001" value={consumeAmount} onChange={(event) => onConsumeAmount(Number(event.target.value))} aria-label={`Quantité consommée de ${product.product_name}`} />}</div></td><td><div className="product-cell">{product.image_url ? <img className="product-image" src={product.image_url} alt="" loading="lazy" /> : <div className="product-placeholder">✳</div>}<div className="product-info"><strong>{product.product_name}</strong><span>{product.brand || product.barcode}{product.quantity_label ? ` · ${product.quantity_label}` : ''}{product.expiration_date ? ` · Expire le ${new Date(`${product.expiration_date}T12:00:00`).toLocaleDateString('fr-FR')}` : ''}</span></div></div></td><td><span className="category-label">{product.category || 'Autre'}</span></td><td>{grade ? <span className={`score-badge grade-${grade}`}><strong>{grade.toUpperCase()}</strong><span>{gradeLabels[grade] || 'Nutri-Score'}</span></span> : <span className="score-unavailable">Non noté</span>}{product.nova_group && <span className="nova-label">NOVA {product.nova_group}</span>}</td><td><strong className="quantity-number">{product.quantity}</strong> <span className="quantity-unit">{product.quantity_unit}</span></td><td><div className="quantity-control"><button onClick={() => onQuantity(-1)} aria-label={`Retirer une unité de ${product.product_name}`}>−</button><span>{product.quantity}</span><button onClick={() => onQuantity(1)} aria-label={`Ajouter une unité de ${product.product_name}`}>+</button></div></td></tr>
+  return <tr><td><div className="consume-select"><input type="checkbox" checked={selected} onChange={(event) => onSelect(event.target.checked)} aria-label={`Sélectionner ${product.product_name} comme consommé`} />{selected && <input className="consume-amount" type="number" min="0.001" max={product.quantity} step="0.001" value={consumeAmount} onChange={(event) => onConsumeAmount(Number(event.target.value))} aria-label={`Quantité consommée de ${product.product_name}`} />}</div></td><td><div className="product-cell">{product.image_url ? <img className="product-image" src={product.image_url} alt="" loading="lazy" /> : <div className="product-placeholder">✳</div>}<div className="product-info"><strong>{product.product_name}</strong><span>{product.brand || product.barcode}{product.quantity_label ? ` · ${product.quantity_label}` : ''}{product.expiration_date ? ` · Expire le ${new Date(`${product.expiration_date}T12:00:00`).toLocaleDateString('fr-FR')}` : ''}</span>{groupName && <span className="group-badge">{groupName}</span>}</div></div></td><td><span className="category-label">{product.category || 'Autre'}</span></td><td>{grade ? <span className={`score-badge grade-${grade}`}><strong>{grade.toUpperCase()}</strong><span>{gradeLabels[grade] || 'Nutri-Score'}</span></span> : <span className="score-unavailable">Non noté</span>}{product.nova_group && <span className="nova-label">NOVA {product.nova_group}</span>}</td><td><strong className="quantity-number">{product.quantity}</strong> <span className="quantity-unit">{product.quantity_unit}</span></td><td><div className="quantity-control"><button onClick={() => onQuantity(-1)} aria-label={`Retirer une unité de ${product.product_name}`}>−</button><span>{product.quantity}</span><button onClick={() => onQuantity(1)} aria-label={`Ajouter une unité de ${product.product_name}`}>+</button></div></td></tr>
 }
 
 function ProductPreview({ data }: { data: OffProduct }) {
