@@ -1016,6 +1016,123 @@
   white-space: nowrap;
 }
 
+.product-table .folder-filter-row td {
+  height: 38px;
+  padding: 4px 8px;
+  border-bottom: 1px solid #f0f1ed;
+  white-space: normal;
+}
+
+.folder-inline-list {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 2px;
+  scrollbar-width: thin;
+}
+
+.folder-mini-item {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  border: 1px solid var(--folder-color, #d9dfd6);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--folder-color, #d9dfd6) 65%, white);
+}
+
+.folder-mini-item.folder-mini-drop-active {
+  outline: 2px solid var(--green);
+}
+
+.folder-mini {
+  display: inline-flex;
+  min-width: 0;
+  height: 27px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 1px solid #e2e8df;
+  border-radius: 6px;
+  color: #596655;
+  background: #f8faf6;
+  font-size: 9px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.folder-mini-item .folder-mini {
+  padding-right: 24px;
+  border: 0;
+  background: transparent;
+}
+
+.folder-mini > span:first-child {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.folder-mini .folder-mini-icon {
+  font-size: 13px;
+}
+
+.folder-mini > span:last-child {
+  max-width: 92px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.folder-mini:hover,
+.folder-mini-item:hover {
+  border-color: #a5c5a5;
+}
+
+.folder-mini-active {
+  border-color: var(--green) !important;
+  color: var(--green-dark);
+  background: #edf4eb !important;
+  box-shadow: 0 0 0 1px var(--green);
+}
+
+.folder-mini-item .folder-mini-active {
+  background: transparent !important;
+  box-shadow: none;
+}
+
+.folder-mini-delete {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: #737d70;
+  background: rgba(255, 255, 255, 0.55);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.folder-mini-delete:hover {
+  color: #a63b35;
+  background: #fff;
+}
+
+.folder-mini-add {
+  width: 27px;
+  border-style: dashed;
+  font-size: 15px;
+}
+
 .product-table td {
   height: 62px;
   padding: 7px 10px;
@@ -1233,20 +1350,25 @@
 
 .expiration-controls {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) repeat(3, 28px);
-  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) repeat(3, minmax(0, 28px));
+  gap: 5px;
   align-items: center;
 }
 
 .expiration-controls input {
   width: 100%;
+  min-width: 0;
 }
 
 .expiration-button {
   display: grid;
-  width: 28px;
+  width: 100%;
+  min-width: 0;
   height: 28px;
   place-items: center;
+  padding: 0;
   border: 1px solid #dfe7db;
   border-radius: 5px;
   color: #3e6d4b;
@@ -1276,6 +1398,30 @@
   gap: 12px;
 }
 
+.folder-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.folder-create-toggle {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid #d9e4d8;
+  border-radius: 7px;
+  color: var(--green-dark);
+  background: #f7faf6;
+  font-size: 19px;
+  line-height: 1;
+}
+
+.folder-create-toggle:hover {
+  border-color: #a5c5a5;
+  background: #edf4eb;
+}
+
 .folder-panel-heading h2 {
   margin: 0;
   color: #343d34;
@@ -1290,21 +1436,41 @@
 }
 
 .folder-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 160px), 1fr));
+  gap: 8px;
   margin-top: 14px;
 }
 
 .folder-card {
-  display: grid;
-  min-width: 120px;
-  grid-template-rows: auto auto;
-  gap: 4px;
-  padding: 12px;
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 64px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 32px 8px 8px;
   border: 1px solid var(--folder-color);
   border-radius: 8px;
   background: color-mix(in srgb, var(--folder-color) 80%, white);
+  transition: box-shadow 150ms ease, transform 150ms ease, background-color 150ms ease;
+}
+
+.folder-card:hover {
+  transform: translateY(-1px);
+}
+
+.folder-card-active,
+.folder-card-drop-active {
+  box-shadow: 0 0 0 2px var(--folder-color);
+}
+
+.folder-all {
+  --folder-color: #cbdcc9;
+}
+
+.folder-unfiled {
+  --folder-color: #d9dfd6;
 }
 
 .folder-card strong,
@@ -1313,31 +1479,136 @@
   font-size: 10px;
 }
 
+.folder-card-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.folder-card-details {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.folder-card-details strong,
+.folder-card-details > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-delete-button {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  color: #737d70;
+  background: transparent;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.folder-delete-button:hover {
+  color: #a63b35;
+  background: rgba(255, 255, 255, 0.5);
+}
+
 html[data-theme='dark'] .folder-card {
   border-color: var(--folder-color);
   background: color-mix(in srgb, var(--folder-color) 68%, #1e261f);
 }
 
 html[data-theme='dark'] .folder-card strong,
-html[data-theme='dark'] .folder-card span {
+html[data-theme='dark'] .folder-card > span,
+html[data-theme='dark'] .folder-card-details > span {
   color: #edf5e9;
+}
+
+html[data-theme='dark'] .folder-create-toggle {
+  border-color: #405244;
+  color: #c4dfbd;
+  background: #252f26;
+}
+
+html[data-theme='dark'] .folder-create-toggle:hover {
+  background: #2d3b2e;
+}
+
+html[data-theme='dark'] .folder-delete-button {
+  color: #d5ddd2;
+}
+
+html[data-theme='dark'] .expiration-button {
+  border-color: #405244;
+  color: #c4dfbd;
+  background: #252f26;
+}
+
+html[data-theme='dark'] .expiration-button:hover {
+  background: #2d3b2e;
+}
+
+html[data-theme='dark'] .folder-icon {
+  background: #252f26;
+}
+
+html[data-theme='dark'] .bulk-form textarea {
+  border-color: #3a463b;
+  color: #e4e9e1;
+  background-color: #252f26;
 }
 
 .folder-icon {
   display: grid;
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
   place-items: center;
   border-radius: 8px;
   background: white;
-  font-size: 18px;
+  font-size: 17px;
+}
+
+.product-table tbody tr[draggable='true'] {
+  cursor: grab;
+}
+
+.product-table tbody tr.product-row-dragging {
+  opacity: 0.45;
 }
 
 .folder-create-form {
   display: grid;
-  grid-template-columns: 1.4fr 0.8fr 56px 56px auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 8px;
   margin-top: 14px;
+}
+
+.folder-create-form label {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  color: #596255;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.folder-create-form > .button {
+  grid-column: 1 / -1;
 }
 
 .folder-create-form input,
@@ -1355,6 +1626,21 @@ html[data-theme='dark'] .folder-card span {
 
 .folder-create-form input[type='color'] {
   padding: 3px;
+}
+
+.folder-modal {
+  width: min(440px, 100%);
+}
+
+.folder-modal .folder-create-form {
+  margin-top: 18px;
+}
+
+html[data-theme='dark'] .manual-form label,
+html[data-theme='dark'] .product-entry-fields label,
+html[data-theme='dark'] .bulk-form label,
+html[data-theme='dark'] .folder-create-form label {
+  color: #c4cec1;
 }
 
 .expiring-soon {
@@ -1574,6 +1860,45 @@ html[data-theme='dark'] .folder-card span {
 
 .manual-form .button {
   margin-top: 4px;
+}
+
+.bulk-modal {
+  width: min(560px, 100%);
+}
+
+.bulk-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.bulk-form label {
+  display: grid;
+  gap: 5px;
+  color: #596255;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.bulk-form textarea {
+  width: 100%;
+  min-height: 150px;
+  padding: 10px;
+  border: 1px solid #e4e8df;
+  border-radius: 5px;
+  color: #414940;
+  background: #fff;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.bulk-example {
+  margin: 0;
+  color: #8c9388;
+  font-size: 10px;
+  line-height: 1.5;
 }
 
 .meals-section .page-heading {
@@ -3010,6 +3335,7 @@ html[data-theme='dark'] .sidebar,
 html[data-theme='dark'] .topbar,
 html[data-theme='dark'] .member-panel,
 html[data-theme='dark'] .list-section,
+html[data-theme='dark'] .folder-panel,
 html[data-theme='dark'] .shopping-list-panel,
 html[data-theme='dark'] .shopping-list-heading,
 html[data-theme='dark'] .meal-list,
@@ -3045,6 +3371,9 @@ html[data-theme='dark'] .product-entry-fields select,
 html[data-theme='dark'] .manual-form input,
 html[data-theme='dark'] .manual-form select,
 html[data-theme='dark'] .manual-form textarea,
+html[data-theme='dark'] .bulk-form textarea,
+html[data-theme='dark'] .folder-create-form input,
+html[data-theme='dark'] .folder-create-form select,
 html[data-theme='dark'] .meal-form input,
 html[data-theme='dark'] .meal-form textarea,
 html[data-theme='dark'] .shopping-add-form input,
@@ -3148,6 +3477,44 @@ html[data-theme='dark'] .no-pending {
 html[data-theme='dark'] .product-table thead,
 html[data-theme='dark'] .quantity-control {
   background-color: #252f26;
+}
+
+html[data-theme='dark'] .product-table .folder-filter-row td {
+  border-color: #303a31;
+}
+
+html[data-theme='dark'] .folder-mini {
+  border-color: #3a463b;
+  color: #c4cec1;
+  background: #252f26;
+}
+
+html[data-theme='dark'] .folder-mini-item {
+  background: color-mix(in srgb, var(--folder-color) 46%, #1e261f);
+}
+
+html[data-theme='dark'] .folder-mini-item .folder-mini {
+  border-color: transparent;
+  background: transparent;
+}
+
+html[data-theme='dark'] .folder-mini-active {
+  border-color: #7da873 !important;
+  color: #d3e8cc;
+  background: #2a3b2c !important;
+}
+
+html[data-theme='dark'] .folder-mini-item .folder-mini-active {
+  background: transparent !important;
+}
+
+html[data-theme='dark'] .folder-mini-delete {
+  color: #d5ddd2;
+  background: #252f26;
+}
+
+html[data-theme='dark'] .folder-mini-add {
+  color: #c4dfbd;
 }
 
 html[data-theme='dark'] .product-table td,
