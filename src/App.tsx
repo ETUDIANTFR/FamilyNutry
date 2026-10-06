@@ -162,8 +162,13 @@ function App() {
   const [importingBulk, setImportingBulk] = useState(false)
   const [activeTab, setActiveTab] = useState<AppTab>('products')
   const [selectedProductFolder, setSelectedProductFolder] = useState<string | null>(null)
+  const [selectedShoppingFolder, setSelectedShoppingFolder] = useState<string | null>(null)
   const [draggedProductId, setDraggedProductId] = useState<string | null>(null)
+  const [draggedShoppingItemId, setDraggedShoppingItemId] = useState<string | null>(null)
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null)
+  const [addDestination, setAddDestination] = useState<'inventory' | 'shopping'>('inventory')
+  const [shoppingQuantityDrafts, setShoppingQuantityDrafts] = useState<Record<string, string>>({})
+  const shoppingTouchTimer = useRef<number | null>(null)
   const [selectedProducts, setSelectedProducts] = useState<Record<string, number>>({})
   const [manualName, setManualName] = useState('')
   const [manualAmount, setManualAmount] = useState('1')
@@ -197,6 +202,12 @@ function App() {
   const creationZoneId = activeZoneId ?? effectiveWriteZoneId
   const inventoryFolders = folders.filter((folder) => folder.kind === 'inventory')
   const shoppingFolders = folders.filter((folder) => folder.kind === 'shopping')
+  const visibleInventoryFolders = activeZoneId
+    ? inventoryFolders.filter((folder) => folder.zone_id === activeZoneId)
+    : inventoryFolders
+  const visibleShoppingFolders = activeZoneId
+    ? shoppingFolders.filter((folder) => folder.zone_id === activeZoneId)
+    : shoppingFolders
   const getFolderName = (folderId?: string | null) => folders.find((folder) => folder.id === folderId)?.name ?? 'Dossier'
   const loadProducts = useCallback(async () => {
     const { data, error } = await supabase.from('products').select('*').order('updated_at', { ascending: false })
@@ -277,6 +288,7 @@ function App() {
       { name: 'Congélateur', kind: 'inventory' as const, icon: '❄', color: '#eaf5ff', zone_id: zone.id, created_by: sessionUser.id },
       { name: 'Étagère', kind: 'inventory' as const, icon: '▤', color: '#f2e4d4', zone_id: zone.id, created_by: sessionUser.id },
       { name: 'Nature', kind: 'shopping' as const, icon: '🛒', color: '#e3f1dc', zone_id: zone.id, created_by: sessionUser.id },
+      { name: 'Consommer', kind: 'shopping' as const, icon: '✓', color: '#e9e2f5', zone_id: zone.id, created_by: sessionUser.id },
     ])
     const { error } = await supabase.from('storage_folders').upsert(defaultFolders, { onConflict: 'zone_id,kind,name' })
     if (error) {
@@ -676,6 +688,10 @@ function App() {
   }
 
   async function deleteFolder(folder: StorageFolder) {
+    if (folder.kind === 'shopping' && folder.name === 'Consommer') {
+      setNotice({ type: 'error', text: 'Le dossier « Consommer » est nécessaire pour conserver l’historique des produits consommés.' })
+      return
+    }
     if (!window.confirm(`Supprimer le dossier « ${folder.name} » ? Les éléments associés resteront dans leurs listes, sans dossier.`)) return
     const { error } = await supabase.from('storage_folders').delete().eq('id', folder.id)
     if (error) {
@@ -683,6 +699,7 @@ function App() {
       return
     }
     if (selectedProductFolder === folder.id) setSelectedProductFolder(null)
+    if (selectedShoppingFolder === folder.id) setSelectedShoppingFolder(null)
     setNotice({ type: 'success', text: `Le dossier « ${folder.name} » a été supprimé.` })
     await Promise.all([loadFolders(), loadProducts(), loadShoppingItems()])
   }
@@ -693,11 +710,13 @@ function App() {
     const name = shoppingItemName.trim()
     if (!name) return
     setAddingShoppingItem(true)
-    const { error } = await supabase.from('shopping_list_items').insert({
+    const { error } = await insertShoppingEntry({
       name,
-      is_checked: false,
-      created_by: sessionUser.id,
-      zone_id: creationZoneId,
+      quantity: 1,
+      expirationDate: null,
+      imageUrl: null,
+      nutriscore: null,
+      zoneId: creationZoneId,
     })
     if (error) {
       setNotice({ type: 'error', text: `Ajout à la liste de courses impossible : ${error.message}` })
@@ -711,15 +730,13 @@ function App() {
 
   async function addProductToShopping(product: Product) {
     if (!sessionUser) return
-    const folderId = folders.find((folder) => folder.zone_id === product.zone_id && folder.kind === 'shopping')?.id ?? null
-    const { error } = await supabase.from('shopping_list_items').insert({
+    const { error } = await insertShoppingEntry({
       name: product.product_name,
-      is_checked: false,
-      created_by: sessionUser.id,
-      zone_id: product.zone_id,
-      image_url: product.image_url,
+      quantity: 1,
+      expirationDate: product.expiration_date,
+      imageUrl: product.image_url,
       nutriscore: product.nutriscore,
-      folder_id: folderId,
+      zoneId: product.zone_id,
     })
     if (error) {
       setNotice({ type: 'error', text: `Ajout à la liste de courses impossible : ${error.message}` })
@@ -727,6 +744,34 @@ function App() {
       setNotice({ type: 'success', text: `${product.product_name} a été ajouté à la liste de courses.` })
       await loadShoppingItems()
     }
+  }
+
+  async function insertShoppingEntry(entry: {
+    name: string
+    quantity: number
+    expirationDate: string | null
+    imageUrl: string | null
+    nutriscore: string | null
+    zoneId: string
+    folderId?: string | null
+  }) {
+    if (!sessionUser) throw new Error('Vous devez être connecté pour ajouter un article aux courses.')
+    const defaultFolderId = folders.find((folder) =>
+      folder.zone_id === entry.zoneId
+      && folder.kind === 'shopping'
+      && folder.name !== 'Consommer',
+    )?.id ?? null
+    return supabase.from('shopping_list_items').insert({
+      name: entry.name,
+      quantity: entry.quantity,
+      expiration_date: entry.expirationDate,
+      is_checked: false,
+      created_by: sessionUser.id,
+      zone_id: entry.zoneId,
+      image_url: entry.imageUrl,
+      nutriscore: entry.nutriscore,
+      folder_id: entry.folderId === undefined ? defaultFolderId : entry.folderId,
+    })
   }
 
   async function addShoppingItemToInventory(item: ShoppingListItem) {
@@ -741,9 +786,9 @@ function App() {
       nutriscore: item.nutriscore ?? null,
       nova_group: null,
       image_url: item.image_url ?? null,
-      quantity: 1,
+      quantity: item.quantity,
       quantity_unit: 'unité',
-      expiration_date: null,
+      expiration_date: item.expiration_date ?? null,
       folder_id: folderId,
       created_by: sessionUser.id,
       updated_by: sessionUser.id,
@@ -755,6 +800,37 @@ function App() {
       setNotice({ type: 'success', text: `${item.name} a été ajouté à l’inventaire.` })
       await loadProducts()
     }
+  }
+
+  const moveShoppingItemToFolder = useCallback(async (itemId: string, folderId: string) => {
+    const item = shoppingItems.find((entry) => entry.id === itemId)
+    const folder = folders.find((entry) => entry.id === folderId && entry.kind === 'shopping')
+    if (!item || !folder || item.zone_id !== folder.zone_id) {
+      setNotice({ type: 'error', text: 'Cet article et ce dossier doivent appartenir au même groupe.' })
+      return
+    }
+    const { error } = await supabase.from('shopping_list_items').update({ folder_id: folder.id }).eq('id', item.id)
+    if (error) {
+      setNotice({ type: 'error', text: `Déplacement de « ${item.name} » impossible : ${error.message}` })
+    } else {
+      setNotice({ type: 'success', text: `${item.name} a été déplacé dans « ${folder.name} ».` })
+      await loadShoppingItems()
+    }
+    setDraggedShoppingItemId(null)
+    setDragOverFolderId(null)
+  }, [folders, loadShoppingItems, shoppingItems])
+
+  async function changeShoppingQuantity(item: ShoppingListItem, quantity: number) {
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setNotice({ type: 'error', text: 'La quantité doit être supérieure à zéro.' })
+      return
+    }
+    const { error } = await supabase.from('shopping_list_items').update({ quantity }).eq('id', item.id)
+    if (error) {
+      setNotice({ type: 'error', text: `Mise à jour de la quantité de « ${item.name} » impossible : ${error.message}` })
+      return
+    }
+    setShoppingItems((items) => items.map((current) => current.id === item.id ? { ...current, quantity } : current))
   }
 
   async function toggleShoppingItem(item: ShoppingListItem) {
@@ -806,21 +882,43 @@ function App() {
     setSavingProduct(true)
     setNotice(null)
     const grade = (foundProduct.data.nutriscore_grade || foundProduct.data.nutrition_grades || '').toLowerCase()
-    const { data: existing, error: findError } = await supabase.from('products').select('id, quantity, quantity_unit, expiration_date, folder_id').eq('zone_id', creationZoneId).eq('barcode', foundProduct.barcode).maybeSingle()
-    if (findError) {
-      setNotice({ type: 'error', text: `Vérification du produit impossible : ${findError.message}` })
-      setSavingProduct(false)
-      return
-    }
     const amount = Number(newAmount)
     if (!Number.isFinite(amount) || amount <= 0) {
       setNotice({ type: 'error', text: 'La quantité doit être supérieure à zéro.' })
       setSavingProduct(false)
       return
     }
+    const productName = foundProduct.data.product_name?.trim() || 'Produit sans nom'
+    if (addDestination === 'shopping') {
+      const { error } = await insertShoppingEntry({
+        name: productName,
+        quantity: amount,
+        expirationDate: expirationDate || null,
+        imageUrl: foundProduct.data.image_front_small_url || null,
+        nutriscore: /^[a-e]$/.test(grade) ? grade : null,
+        zoneId: creationZoneId,
+      })
+      if (error) {
+        setNotice({ type: 'error', text: `Ajout à la liste de courses impossible : ${error.message}` })
+      } else {
+        setNotice({ type: 'success', text: `${productName} a été ajouté à la liste de courses.` })
+        setFoundProduct(null)
+        setBarcode('')
+        setExpirationDate('')
+        await loadShoppingItems()
+      }
+      setSavingProduct(false)
+      return
+    }
+    const { data: existing, error: findError } = await supabase.from('products').select('id, quantity, quantity_unit, expiration_date, folder_id').eq('zone_id', creationZoneId).eq('barcode', foundProduct.barcode).maybeSingle()
+    if (findError) {
+      setNotice({ type: 'error', text: `Vérification du produit impossible : ${findError.message}` })
+      setSavingProduct(false)
+      return
+    }
     const productValues = {
       barcode: foundProduct.barcode,
-      product_name: foundProduct.data.product_name?.trim() || 'Produit sans nom',
+      product_name: productName,
       brand: foundProduct.data.brands?.trim() || null,
       quantity_label: foundProduct.data.quantity?.trim() || null,
       category: foundProduct.data.categories?.split(',')[0]?.trim() || null,
@@ -829,7 +927,7 @@ function App() {
         ? foundProduct.data.nova_group
         : null,
       image_url: foundProduct.data.image_front_small_url || null,
-      quantity: Number(newAmount),
+      quantity: amount,
       quantity_unit: newUnit,
       expiration_date: expirationDate || existing?.expiration_date || null,
       folder_id: existing?.folder_id ?? null,
@@ -858,6 +956,7 @@ function App() {
   async function importBulkProducts(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!sessionUser || !creationZoneId) return
+    const destination = addDestination
     const lines = bulkText.split(/\r?\n/)
       .map((raw, index) => ({ raw: raw.trim(), lineNumber: index + 1 }))
       .filter((line) => line.raw)
@@ -883,6 +982,19 @@ function App() {
         if (entry.isBarcode) {
           const data = await fetchOffProduct(entry.identifier)
           const grade = (data.nutriscore_grade || data.nutrition_grades || '').toLowerCase()
+          if (destination === 'shopping') {
+            const { error } = await insertShoppingEntry({
+              name: data.product_name?.trim() || 'Produit sans nom',
+              quantity: entry.quantity,
+              expirationDate: entry.expirationDate,
+              imageUrl: data.image_front_small_url || null,
+              nutriscore: /^[a-e]$/.test(grade) ? grade : null,
+              zoneId: creationZoneId,
+            })
+            if (error) throw new Error(`Ajout aux courses impossible : ${error.message}`)
+            imported += 1
+            continue
+          }
           const { data: existing, error: findError } = await supabase
             .from('products')
             .select('id, quantity, quantity_unit, expiration_date')
@@ -918,6 +1030,19 @@ function App() {
             })
           if (result.error) throw new Error(`Enregistrement impossible : ${result.error.message}`)
         } else {
+          if (destination === 'shopping') {
+            const { error } = await insertShoppingEntry({
+              name: entry.identifier,
+              quantity: entry.quantity,
+              expirationDate: entry.expirationDate,
+              imageUrl: null,
+              nutriscore: null,
+              zoneId: creationZoneId,
+            })
+            if (error) throw new Error(`Ajout aux courses impossible : ${error.message}`)
+            imported += 1
+            continue
+          }
           const { error } = await supabase.from('products').insert({
             barcode: `MANUAL-${crypto.randomUUID()}`,
             product_name: entry.identifier,
@@ -943,7 +1068,8 @@ function App() {
         errors.push(`Ligne ${line.lineNumber} : ${error instanceof Error ? error.message : 'Import impossible.'}`)
       }
     }
-    await loadProducts()
+    if (destination === 'shopping') await loadShoppingItems()
+    else await loadProducts()
     setBulkText(failedLines.join('\n'))
     if (errors.length > 0) {
       setNotice({
@@ -951,7 +1077,7 @@ function App() {
         text: `${imported} produit(s) importé(s). ${errors.join(' ')}`,
       })
     } else {
-      setNotice({ type: 'success', text: `${imported} produit(s) ajouté(s) à la liste partagée.` })
+      setNotice({ type: 'success', text: `${imported} produit(s) ajouté(s) à ${destination === 'shopping' ? 'la liste de courses' : 'la liste partagée'}.` })
       setBulkOpen(false)
     }
     setImportingBulk(false)
@@ -1009,6 +1135,36 @@ function App() {
     }
   }, [draggedProductId, moveProductToFolder])
 
+  useEffect(() => {
+    if (!draggedShoppingItemId) return
+    const handleTouchMove = (event: TouchEvent) => {
+      const touch = event.touches[0]
+      if (!touch) return
+      event.preventDefault()
+      const folder = document.elementFromPoint(touch.clientX, touch.clientY)
+        ?.closest<HTMLElement>('[data-folder-drop-kind="shopping"]')
+      setDragOverFolderId(folder?.dataset.folderDrop ?? null)
+    }
+    const handleTouchEnd = (event: TouchEvent) => {
+      const touch = event.changedTouches[0]
+      const folder = touch
+        ? document.elementFromPoint(touch.clientX, touch.clientY)?.closest<HTMLElement>('[data-folder-drop-kind="shopping"]')
+        : null
+      if (folder?.dataset.folderDrop) {
+        void moveShoppingItemToFolder(draggedShoppingItemId, folder.dataset.folderDrop)
+      } else {
+        setDraggedShoppingItemId(null)
+        setDragOverFolderId(null)
+      }
+    }
+    window.addEventListener('touchmove', handleTouchMove, { passive: false })
+    window.addEventListener('touchend', handleTouchEnd)
+    return () => {
+      window.removeEventListener('touchmove', handleTouchMove)
+      window.removeEventListener('touchend', handleTouchEnd)
+    }
+  }, [draggedShoppingItemId, moveShoppingItemToFolder])
+
   async function changeQuantity(product: Product, delta: number) {
     const pack = parsePack(product.quantity_label)
     const step = pack.unit === product.quantity_unit ? pack.amount : 1
@@ -1036,6 +1192,29 @@ function App() {
     const name = manualName.trim()
     if (!name) {
       setNotice({ type: 'error', text: 'Saisissez le nom du produit.' })
+      setSavingProduct(false)
+      return
+    }
+    if (addDestination === 'shopping') {
+      const { error } = await insertShoppingEntry({
+        name,
+        quantity: amount,
+        expirationDate: expirationDate || null,
+        imageUrl: null,
+        nutriscore: null,
+        zoneId: creationZoneId,
+      })
+      if (error) {
+        setNotice({ type: 'error', text: `Ajout à la liste de courses impossible : ${error.message}` })
+      } else {
+        setNotice({ type: 'success', text: `${name} a été ajouté à la liste de courses.` })
+        setManualName('')
+        setManualAmount('1')
+        setManualUnit('unité')
+        setExpirationDate('')
+        setManualOpen(false)
+        await loadShoppingItems()
+      }
       setSavingProduct(false)
       return
     }
@@ -1075,6 +1254,7 @@ function App() {
     const selected = visibleProducts.filter((product) => selectedProducts[product.id] !== undefined)
     if (selected.length === 0) return
     const failures: string[] = []
+    let consumed = 0
     for (const product of selected) {
       const amount = selectedProducts[product.id]
       if (!Number.isFinite(amount) || amount <= 0 || amount > product.quantity) {
@@ -1082,13 +1262,50 @@ function App() {
         continue
       }
       const { error } = await supabase.rpc('consume_product', { p_product_id: product.id, p_amount: amount })
-      if (error) failures.push(`${product.product_name} : ${error.message}`)
+      if (error) {
+        failures.push(`${product.product_name} : ${error.message}`)
+        continue
+      }
+      consumed += 1
+      let consumedFolder = folders.find((folder) =>
+        folder.zone_id === product.zone_id && folder.kind === 'shopping' && folder.name === 'Consommer',
+      )
+      if (!consumedFolder) {
+        const { data, error: folderError } = await supabase.from('storage_folders')
+          .upsert({
+            name: 'Consommer',
+            kind: 'shopping',
+            icon: '✓',
+            color: '#e9e2f5',
+            zone_id: product.zone_id,
+            created_by: sessionUser.id,
+          }, { onConflict: 'zone_id,kind,name' })
+          .select('*')
+          .single()
+        if (folderError) {
+          failures.push(`${product.product_name} : consommé, mais création du dossier « Consommer » impossible (${folderError.message})`)
+          continue
+        }
+        consumedFolder = data
+      }
+      const { error: archiveError } = await insertShoppingEntry({
+        name: product.product_name,
+        quantity: amount,
+        expirationDate: product.expiration_date,
+        imageUrl: product.image_url,
+        nutriscore: product.nutriscore,
+        zoneId: product.zone_id,
+        folderId: consumedFolder.id,
+      })
+      if (archiveError) {
+        failures.push(`${product.product_name} : consommé, mais archivage impossible (${archiveError.message})`)
+      }
     }
     setSelectedProducts({})
-    await loadProducts()
+    await Promise.all([loadProducts(), loadShoppingItems(), loadFolders()])
     setNotice(failures.length
       ? { type: 'error', text: `Certaines consommations ont échoué : ${failures.slice(0, 2).join(' ; ')}${failures.length > 2 ? ` ; et ${failures.length - 2} autre(s)` : ''}.` }
-      : { type: 'success', text: `Consommation enregistrée pour ${selected.length} produit(s).` })
+      : { type: 'success', text: `Consommation enregistrée pour ${consumed} produit(s), archivée dans « Consommer ».` })
   }
 
   async function copyProducts() {
@@ -1380,6 +1597,8 @@ function App() {
     activeZoneId ? items.filter((item) => item.zone_id === activeZoneId) : items
   const groupProducts = inSelectedZone(products)
   const groupShoppingItems = inSelectedZone(shoppingItems)
+  const visibleShoppingItems = groupShoppingItems.filter((item) => selectedShoppingFolder === null
+    || (selectedShoppingFolder === 'unfiled' ? !item.folder_id : item.folder_id === selectedShoppingFolder))
   const groupMeals = inSelectedZone(meals)
   const groupCalendarEvents = inSelectedZone(calendarEvents)
   const showGroupNames = activeZoneId === null && zones.length > 1
@@ -1480,7 +1699,7 @@ function App() {
         <header className="topbar"><div className="breadcrumb">Mon espace <span>/</span> <strong>{activeTab === 'products' ? 'Ma liste' : activeTab === 'shopping' ? 'Liste de courses' : activeTab === 'meals' ? 'Repas' : activeTab === 'calendar' ? 'Calendrier' : 'Membres'}</strong></div><div className="topbar-right">
           <div className="group-switcher">
             <label htmlFor="display-zone">AFFICHER LES DONNÉES DE</label>
-            <select id="display-zone"             value={activeZoneId ?? ''} onChange={(event) => { setSelectedZoneId(event.target.value || null); setSelectedProductFolder(null) }} disabled={zones.length === 0}>
+            <select id="display-zone"             value={activeZoneId ?? ''} onChange={(event) => { setSelectedZoneId(event.target.value || null); setSelectedProductFolder(null); setSelectedShoppingFolder(null) }} disabled={zones.length === 0}>
               <option value="">Tous mes groupes</option>
               {zones.map((zone) => <option value={zone.id} key={zone.id}>{zone.name}</option>)}
             </select>
@@ -1525,12 +1744,13 @@ function App() {
                     <button type="button" className={`folder-mini ${selectedProductFolder === 'unfiled' ? 'folder-mini-active' : ''}`} onClick={() => setSelectedProductFolder('unfiled')} title={`Sans dossier (${groupProducts.filter((product) => !product.folder_id).length})`} aria-label={`Sans dossier, ${groupProducts.filter((product) => !product.folder_id).length}`}>
                       <span aria-hidden="true">＋</span><span>Sans dossier</span>
                     </button>
-                    {inventoryFolders.map((folder) => (
+                    {visibleInventoryFolders.map((folder) => (
                       <div
                         className={`folder-mini-item ${dragOverFolderId === folder.id ? 'folder-mini-drop-active' : ''}`}
                         key={folder.id}
                         style={{ '--folder-color': folder.color } as CSSProperties}
                         data-folder-drop={folder.id}
+                        data-folder-drop-kind="inventory"
                         onDragOver={(event) => { event.preventDefault(); setDragOverFolderId(folder.id) }}
                         onDragLeave={() => setDragOverFolderId(null)}
                         onDrop={(event) => {
@@ -1549,7 +1769,7 @@ function App() {
                   </div></td></tr>
                 </thead>
                 {groupProducts.length > 0 && visibleProducts.length > 0 && <tbody>
-                  {visibleProducts.map((product) => <ProductRow key={product.id} product={product} groupName={showGroupNames ? getZoneName(product.zone_id) : undefined} folderName={getFolderName(product.folder_id)} selected={selectedProducts[product.id] !== undefined} consumeAmount={selectedProducts[product.id] ?? 1} dragging={draggedProductId === product.id} onLongPress={() => { setDraggedProductId(product.id); setNotice({ type: 'info', text: `Déplacez ${product.product_name} vers un dossier.` }) }} onDragStart={(event) => { event.dataTransfer.setData('text/plain', product.id); event.dataTransfer.effectAllowed = 'move'; setDraggedProductId(product.id) }} onDragEnd={() => { setDraggedProductId(null); setDragOverFolderId(null) }} onSelect={(checked) => setSelectedProducts((current) => { const next = { ...current }; if (checked) next[product.id] = 1; else delete next[product.id]; return next })} onConsumeAmount={(amount) => setSelectedProducts((current) => ({ ...current, [product.id]: amount }))} onQuantity={(delta) => void changeQuantity(product, delta)} onAddToShopping={() => void addProductToShopping(product)} />)}
+                  {visibleProducts.map((product) => <ProductRow key={product.id} product={product} groupName={showGroupNames ? getZoneName(product.zone_id) : undefined} folderName={product.folder_id ? getFolderName(product.folder_id) : undefined} selected={selectedProducts[product.id] !== undefined} consumeAmount={selectedProducts[product.id] ?? 1} dragging={draggedProductId === product.id} onLongPress={() => { setDraggedProductId(product.id); setNotice({ type: 'info', text: `Déplacez ${product.product_name} vers un dossier.` }) }} onDragStart={(event) => { event.dataTransfer.setData('text/plain', product.id); event.dataTransfer.effectAllowed = 'move'; setDraggedProductId(product.id) }} onDragEnd={() => { setDraggedProductId(null); setDragOverFolderId(null) }} onSelect={(checked) => setSelectedProducts((current) => { const next = { ...current }; if (checked) next[product.id] = 1; else delete next[product.id]; return next })} onConsumeAmount={(amount) => setSelectedProducts((current) => ({ ...current, [product.id]: amount }))} onQuantity={(delta) => void changeQuantity(product, delta)} onAddToShopping={() => void addProductToShopping(product)} />)}
                 </tbody>}
                 </table></div>
                 {groupProducts.length === 0 ? <EmptyState onScan={openScanner} /> : visibleProducts.length === 0 ? <div className="empty-filter">{search.trim() ? `Aucun produit ne correspond à « ${search} » dans ce dossier.` : 'Aucun produit dans ce dossier.'}</div> : null}
@@ -1579,28 +1799,10 @@ function App() {
                   {addingShoppingItem ? 'Ajout…' : '＋ Ajouter'}
                 </button>
               </form>
-              <div className="folder-panel">
-                <div className="folder-panel-heading">
-                <div><h2>Dossiers de la liste de courses</h2><p>Classez vos achats dans un dossier.</p></div>
-                <div className="folder-heading-actions">
-                  <span className="subtle-count">{shoppingFolders.length}</span>
-                  <button type="button" className="folder-create-toggle" onClick={() => { setNewFolderKind('shopping'); setFolderModalOpen(true) }} aria-label="Créer un dossier de courses" title="Créer un dossier">＋</button>
-                </div>
-              </div>
-              <div className="folder-list">
-                {shoppingFolders.length === 0 ? <div className="empty-filter">Aucun dossier pour les courses.</div> : shoppingFolders.map((folder) => (
-                  <div className="folder-card" key={folder.id} style={{ '--folder-color': folder.color } as CSSProperties}>
-                    <span className="folder-icon" aria-hidden="true">{folder.icon}</span>
-                    <span className="folder-card-details"><strong>{folder.name}</strong><span>{groupShoppingItems.filter((item) => item.folder_id === folder.id).length} article(s)</span></span>
-                    <button type="button" className="folder-delete-button" onClick={() => void deleteFolder(folder)} aria-label={`Supprimer le dossier ${folder.name}`} title="Supprimer le dossier">×</button>
-                  </div>
-                ))}
-              </div>
-              </div>
               <div className="shopping-list-panel">
                 <div className="shopping-list-heading">
                   <div>
-                    <h2>À acheter <span className="subtle-count">{groupShoppingItems.filter((item) => !item.is_checked).length}</span></h2>
+                    <h2>Liste de courses <span className="subtle-count">{groupShoppingItems.filter((item) => !item.is_checked).length}</span></h2>
                     <p>La liste est partagée avec tous les membres.</p>
                   </div>
                   {groupShoppingItems.some((item) => item.is_checked) && (
@@ -1609,16 +1811,48 @@ function App() {
                     </button>
                   )}
                 </div>
+                <div className="folder-inline-list shopping-folder-inline" aria-label="Filtrer les articles par dossier">
+                  <button type="button" className={`folder-mini ${selectedShoppingFolder === null ? 'folder-mini-active' : ''}`} onClick={() => setSelectedShoppingFolder(null)} title={`Tous les articles (${groupShoppingItems.length})`} aria-label={`Tous les articles, ${groupShoppingItems.length}`}>
+                    <span aria-hidden="true">▦</span><span>Tous</span>
+                  </button>
+                  <button type="button" className={`folder-mini ${selectedShoppingFolder === 'unfiled' ? 'folder-mini-active' : ''}`} onClick={() => setSelectedShoppingFolder('unfiled')} title={`Sans dossier (${groupShoppingItems.filter((item) => !item.folder_id).length})`} aria-label={`Sans dossier, ${groupShoppingItems.filter((item) => !item.folder_id).length}`}>
+                    <span aria-hidden="true">＋</span><span>Sans dossier</span>
+                  </button>
+                  {visibleShoppingFolders.map((folder) => (
+                    <div
+                      className={`folder-mini-item ${dragOverFolderId === folder.id ? 'folder-mini-drop-active' : ''}`}
+                      key={folder.id}
+                      style={{ '--folder-color': folder.color } as CSSProperties}
+                      data-folder-drop={folder.id}
+                      data-folder-drop-kind="shopping"
+                      onDragOver={(event) => { event.preventDefault(); setDragOverFolderId(folder.id) }}
+                      onDragLeave={() => setDragOverFolderId(null)}
+                      onDrop={(event) => {
+                        event.preventDefault()
+                        const itemId = event.dataTransfer.getData('text/plain') || draggedShoppingItemId
+                        if (itemId) void moveShoppingItemToFolder(itemId, folder.id)
+                      }}
+                    >
+                      <button type="button" className={`folder-mini ${selectedShoppingFolder === folder.id ? 'folder-mini-active' : ''}`} onClick={() => setSelectedShoppingFolder(folder.id)} title={`${folder.name}${showGroupNames ? ` · ${getZoneName(folder.zone_id)}` : ''} (${groupShoppingItems.filter((item) => item.folder_id === folder.id).length})`} aria-label={`Afficher le dossier ${folder.name}${showGroupNames ? `, ${getZoneName(folder.zone_id)}` : ''}`}>
+                        <span className="folder-mini-icon" aria-hidden="true">{folder.icon}</span><span>{folder.name}{showGroupNames ? ` · ${getZoneName(folder.zone_id)}` : ''}</span>
+                      </button>
+                      {folder.name !== 'Consommer' && <button type="button" className="folder-mini-delete" onClick={() => void deleteFolder(folder)} aria-label={`Supprimer le dossier ${folder.name}`} title={`Supprimer ${folder.name}`}>×</button>}
+                    </div>
+                  ))}
+                  <button type="button" className="folder-mini folder-mini-add" onClick={() => { setNewFolderKind('shopping'); setFolderModalOpen(true) }} aria-label="Créer un dossier de courses" title="Créer un dossier">＋</button>
+                </div>
                 {groupShoppingItems.length === 0 ? (
                   <div className="no-pending">
                     <span>✓</span>
                     <strong>La liste est vide.</strong>
                     <p>Ajoutez les articles à acheter ci-dessus.</p>
                   </div>
+                ) : visibleShoppingItems.length === 0 ? (
+                  <div className="empty-filter">Aucun article dans ce dossier.</div>
                 ) : (
                   <ul className="shopping-items">
-                    {groupShoppingItems.map((item) => (
-                      <li className={`shopping-item ${item.is_checked ? 'checked' : ''}`} key={item.id}>
+                    {visibleShoppingItems.map((item) => (
+                      <li className={`shopping-item ${item.is_checked ? 'checked' : ''} ${draggedShoppingItemId === item.id ? 'shopping-item-dragging' : ''}`} key={item.id} draggable onDragStart={(event) => { event.dataTransfer.setData('text/plain', item.id); event.dataTransfer.effectAllowed = 'move'; setDraggedShoppingItemId(item.id) }} onDragEnd={() => { setDraggedShoppingItemId(null); setDragOverFolderId(null) }} onTouchStart={() => { if (shoppingTouchTimer.current !== null) window.clearTimeout(shoppingTouchTimer.current); shoppingTouchTimer.current = window.setTimeout(() => setDraggedShoppingItemId(item.id), 450) }} onTouchEnd={() => { if (shoppingTouchTimer.current !== null) window.clearTimeout(shoppingTouchTimer.current); shoppingTouchTimer.current = null }} onTouchCancel={() => { if (shoppingTouchTimer.current !== null) window.clearTimeout(shoppingTouchTimer.current); shoppingTouchTimer.current = null }}>
                         {item.image_url ? <img className="shopping-item-image" src={item.image_url} alt="" loading="lazy" /> : <div className="shopping-item-image shopping-item-placeholder">✳</div>}
                         <label>
                           <input
@@ -1627,10 +1861,21 @@ function App() {
                             onChange={() => void toggleShoppingItem(item)}
                             aria-label={`${item.is_checked ? 'Décocher' : 'Cocher'} ${item.name}`}
                           />
-                          <span>{item.name}</span>
+                          <span>{item.name}{item.quantity !== 1 ? ` x${item.quantity}` : ''}{item.expiration_date ? <small className="shopping-item-expiration"> · Péremption : {formatFrenchDate(item.expiration_date)}</small> : null}</span>
                           {item.nutriscore && <span className={`score-badge grade-${item.nutriscore}`}><strong>{item.nutriscore.toUpperCase()}</strong></span>}
                         </label>
-                        {item.folder_id && <span className="group-badge">{getFolderName(item.folder_id)}</span>}
+                        <div className="shopping-quantity-control" aria-label={`Modifier la quantité de ${item.name}`}>
+                          <button type="button" onClick={() => void changeShoppingQuantity(item, item.quantity - 1)} disabled={item.quantity <= 1} aria-label={`Retirer une unité de ${item.name}`}>−</button>
+                          <input type="number" min="0.001" step="0.001" value={shoppingQuantityDrafts[item.id] ?? item.quantity} onChange={(event) => setShoppingQuantityDrafts((drafts) => ({ ...drafts, [item.id]: event.target.value }))} onBlur={() => {
+                            const draft = shoppingQuantityDrafts[item.id]
+                            if (draft === undefined) return
+                            const quantity = Number(draft)
+                            if (Number.isFinite(quantity) && quantity > 0) void changeShoppingQuantity(item, quantity)
+                            else setNotice({ type: 'error', text: 'La quantité doit être supérieure à zéro.' })
+                            setShoppingQuantityDrafts((drafts) => { const next = { ...drafts }; delete next[item.id]; return next })
+                          }} aria-label={`Quantité de ${item.name}`} />
+                          <button type="button" onClick={() => void changeShoppingQuantity(item, item.quantity + 1)} aria-label={`Ajouter une unité de ${item.name}`}>＋</button>
+                        </div>
                         {showGroupNames && <span className="group-badge">{getZoneName(item.zone_id)}</span>}
                         <button
                           className="shopping-add-inventory"
@@ -1890,9 +2135,9 @@ function App() {
         </div>
       )}
       {folderModalOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !savingFolder) setFolderModalOpen(false) }}><section className="scanner-modal folder-modal" role="dialog" aria-modal="true" aria-labelledby="folder-modal-title"><button className="modal-close" type="button" onClick={() => setFolderModalOpen(false)} aria-label="Fermer" disabled={savingFolder}>×</button><span className="eyebrow">ORGANISATION</span><h2 id="folder-modal-title">Créer un dossier</h2><p className="modal-description">Choisissez un nom, une icône et une couleur pour votre dossier.</p><form className="folder-create-form" onSubmit={(event) => void createFolder(event)}><label>Nom du dossier<input value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} placeholder="Ex. Placard" maxLength={80} required autoFocus /></label><label>Liste<select value={newFolderKind} onChange={(event) => setNewFolderKind(event.target.value as 'inventory' | 'shopping')}><option value="inventory">Inventaire</option><option value="shopping">Liste de courses</option></select></label><label>Icône<input value={newFolderIcon} onChange={(event) => setNewFolderIcon(event.target.value)} maxLength={4} aria-label="Icône du dossier" /></label><label>Couleur<input type="color" value={newFolderColor} onChange={(event) => setNewFolderColor(event.target.value)} aria-label="Couleur du dossier" /></label><button className="button button-primary button-wide" type="submit" disabled={savingFolder || !newFolderName.trim() || !creationZoneId}>{savingFolder ? 'Création…' : 'Créer le dossier'}<span>↗</span></button></form></section></div>}
-      {bulkOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !importingBulk) setBulkOpen(false) }}><section className="scanner-modal manual-modal bulk-modal" role="dialog" aria-modal="true" aria-labelledby="bulk-title"><button className="modal-close" onClick={() => setBulkOpen(false)} aria-label="Fermer" disabled={importingBulk}>×</button><span className="eyebrow">AJOUT EN LOT</span><h2 id="bulk-title">Ajouter plusieurs produits</h2><p className="modal-description">Collez un produit par ligne. Format : nom ou code-barres | date JJ/MM/AAAA | quantité. La date et la quantité sont facultatives.</p><form className="bulk-form" onSubmit={(event) => void importBulkProducts(event)}><label htmlFor="bulk-products">Produits à ajouter<textarea id="bulk-products" value={bulkText} onChange={(event) => setBulkText(event.target.value)} placeholder={'LAIT | 22/07/2027\n3155250001298|22/07/2027|2\nLAIT\nLAIT||2'} rows={8} required disabled={importingBulk} /></label><p className="bulk-example">Les codes-barres sont recherchés sur Open Food Facts. Une ligne en échec reste dans le champ pour pouvoir être corrigée ou relancée.</p><button className="button button-primary button-wide" disabled={importingBulk || !bulkText.trim() || !creationZoneId}>{importingBulk ? 'Import en cours…' : 'Ajouter les produits'}<span>↗</span></button></form></section></div>}
-      {manualOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setManualOpen(false) }}><section className="scanner-modal manual-modal" role="dialog" aria-modal="true" aria-labelledby="manual-title"><button className="modal-close" onClick={() => setManualOpen(false)} aria-label="Fermer">×</button><span className="eyebrow">AJOUTER À LA LISTE</span><h2 id="manual-title">Saisie manuelle</h2><p className="modal-description">Ajoutez un produit même s’il n’a pas de code-barres.</p><form className="manual-form" onSubmit={(event) => void saveManualProduct(event)}><label>Nom du produit<input value={manualName} onChange={(event) => setManualName(event.target.value)} placeholder="Ex. farine de blé" required maxLength={120} /></label><label>Quantité<input type="number" min="0.001" step="0.001" value={manualAmount} onChange={(event) => setManualAmount(event.target.value)} required /></label><label>Unité<select value={manualUnit} onChange={(event) => setManualUnit(event.target.value)}><option>unité</option><option>g</option><option>kg</option><option>ml</option><option>l</option></select></label><label><span>Date de péremption</span><div className="expiration-controls"><input type="date" value={expirationDate} onChange={(event) => setExpirationDate(event.target.value)} /><button type="button" className="expiration-button" onClick={() => addExpirationOffset(1)} aria-label="Ajouter un jour">＋</button><button type="button" className="expiration-button" onClick={() => addExpirationOffset(30)} aria-label="Ajouter un mois">＋＋</button><button type="button" className="expiration-button" onClick={() => addExpirationOffset(365)} aria-label="Ajouter un an">＋＋＋</button></div></label><button className="button button-primary button-wide" disabled={savingProduct}>{savingProduct ? 'Ajout en cours…' : 'Ajouter à la liste'}<span>↗</span></button></form></section></div>}
-      {scannerOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setScannerOpen(false) }}><section className="scanner-modal" role="dialog" aria-modal="true" aria-labelledby="scanner-title"><button className="modal-close" onClick={() => setScannerOpen(false)} aria-label="Fermer">×</button><span className="eyebrow">AJOUTER À LA LISTE</span><h2 id="scanner-title">Scanner un produit</h2><p className="modal-description">Pointez la caméra sur le code-barres du produit.</p><div className="scanner-frame">{scannerOpen && <div id="qr-reader" />}{!scanning && <div className="scanner-placeholder"><span>▣</span><p>Autorisez l’accès à la caméra<br />pour scanner le code-barres.</p></div>}</div><div className="scanner-divider"><span>OU SAISIR LE CODE</span></div><form className="barcode-form" onSubmit={(event) => void lookupProduct(event)}><input value={barcode} onChange={(event) => { setBarcode(event.target.value); setFoundProduct(null) }} placeholder="Ex. 3017620422003" inputMode="numeric" aria-label="Code-barres du produit" /><button className="button button-primary" disabled={lookupBusy || !barcode.trim()}>{lookupBusy ? 'Recherche…' : 'Rechercher'}</button></form>{foundProduct && <div className="found-product"><ProductPreview data={foundProduct.data} /><div className="product-entry-fields"><label>Quantité<input type="number" min="0.001" step="0.001" value={newAmount} onChange={(event) => setNewAmount(event.target.value)} /></label><label>Unité<select value={newUnit} onChange={(event) => setNewUnit(event.target.value)}><option>unité</option><option>g</option><option>kg</option><option>ml</option><option>l</option></select></label><label><span>Date de péremption</span><div className="expiration-controls"><input type="date" value={expirationDate} onChange={(event) => setExpirationDate(event.target.value)} /><button type="button" className="expiration-button" onClick={() => addExpirationOffset(1)} aria-label="Ajouter un jour">＋</button><button type="button" className="expiration-button" onClick={() => addExpirationOffset(30)} aria-label="Ajouter un mois">＋＋</button><button type="button" className="expiration-button" onClick={() => addExpirationOffset(365)} aria-label="Ajouter un an">＋＋＋</button></div></label></div><button className="button button-primary button-wide" onClick={() => void saveProduct()} disabled={savingProduct || !Number.isFinite(Number(newAmount)) || Number(newAmount) <= 0}>{savingProduct ? 'Ajout en cours…' : 'Ajouter à la liste partagée'}<span>↗</span></button></div>}<p className="scanner-privacy">L’accès caméra est utilisé uniquement pour lire le code-barres.</p></section></div>}
+      {bulkOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !importingBulk) setBulkOpen(false) }}><section className="scanner-modal manual-modal bulk-modal" role="dialog" aria-modal="true" aria-labelledby="bulk-title"><button className="modal-close" onClick={() => setBulkOpen(false)} aria-label="Fermer" disabled={importingBulk}>×</button><span className="eyebrow">AJOUT EN LOT</span><h2 id="bulk-title">Ajouter plusieurs produits</h2><p className="modal-description">Collez un produit par ligne. Format : nom ou code-barres | date JJ/MM/AAAA | quantité. La date et la quantité sont facultatives.</p><form className="bulk-form" onSubmit={(event) => void importBulkProducts(event)}><DestinationSelector value={addDestination} onChange={setAddDestination} disabled={importingBulk} /><label htmlFor="bulk-products">Produits à ajouter<textarea id="bulk-products" value={bulkText} onChange={(event) => setBulkText(event.target.value)} placeholder={'LAIT | 22/07/2027\n3155250001298|22/07/2027|2\nLAIT\nLAIT||2'} rows={8} required disabled={importingBulk} /></label><p className="bulk-example">Les codes-barres sont recherchés sur Open Food Facts. Une ligne en échec reste dans le champ pour pouvoir être corrigée ou relancée.</p><button className="button button-primary button-wide" disabled={importingBulk || !bulkText.trim() || !creationZoneId}>{importingBulk ? 'Import en cours…' : 'Ajouter les produits'}<span>↗</span></button></form></section></div>}
+      {manualOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setManualOpen(false) }}><section className="scanner-modal manual-modal" role="dialog" aria-modal="true" aria-labelledby="manual-title"><button className="modal-close" onClick={() => setManualOpen(false)} aria-label="Fermer">×</button><span className="eyebrow">AJOUTER À LA LISTE</span><h2 id="manual-title">Saisie manuelle</h2><p className="modal-description">Ajoutez un produit même s’il n’a pas de code-barres.</p><form className="manual-form" onSubmit={(event) => void saveManualProduct(event)}><DestinationSelector value={addDestination} onChange={setAddDestination} disabled={savingProduct} /><label>Nom du produit<input value={manualName} onChange={(event) => setManualName(event.target.value)} placeholder="Ex. farine de blé" required maxLength={120} /></label><label>Quantité<input type="number" min="0.001" step="0.001" value={manualAmount} onChange={(event) => setManualAmount(event.target.value)} required /></label><label>Unité<select value={manualUnit} onChange={(event) => setManualUnit(event.target.value)}><option>unité</option><option>g</option><option>kg</option><option>ml</option><option>l</option></select></label><label><span>Date de péremption</span><div className="expiration-controls"><input type="date" value={expirationDate} onChange={(event) => setExpirationDate(event.target.value)} /><button type="button" className="expiration-button" onClick={() => addExpirationOffset(1)} aria-label="Ajouter un jour">＋</button><button type="button" className="expiration-button" onClick={() => addExpirationOffset(30)} aria-label="Ajouter un mois">＋＋</button><button type="button" className="expiration-button" onClick={() => addExpirationOffset(365)} aria-label="Ajouter un an">＋＋＋</button></div></label><button className="button button-primary button-wide" disabled={savingProduct}>{savingProduct ? 'Ajout en cours…' : 'Ajouter à la liste'}<span>↗</span></button></form></section></div>}
+      {scannerOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setScannerOpen(false) }}><section className="scanner-modal" role="dialog" aria-modal="true" aria-labelledby="scanner-title"><button className="modal-close" onClick={() => setScannerOpen(false)} aria-label="Fermer">×</button><span className="eyebrow">AJOUTER À LA LISTE</span><h2 id="scanner-title">Scanner un produit</h2><p className="modal-description">Pointez la caméra sur le code-barres du produit.</p><DestinationSelector value={addDestination} onChange={setAddDestination} disabled={savingProduct || lookupBusy} /><div className="scanner-frame">{scannerOpen && <div id="qr-reader" />}{!scanning && <div className="scanner-placeholder"><span>▣</span><p>Autorisez l’accès à la caméra<br />pour scanner le code-barres.</p></div>}</div><div className="scanner-divider"><span>OU SAISIR LE CODE</span></div><form className="barcode-form" onSubmit={(event) => void lookupProduct(event)}><input value={barcode} onChange={(event) => { setBarcode(event.target.value); setFoundProduct(null) }} placeholder="Ex. 3017620422003" inputMode="numeric" aria-label="Code-barres du produit" /><button className="button button-primary" disabled={lookupBusy || !barcode.trim()}>{lookupBusy ? 'Recherche…' : 'Rechercher'}</button></form>{foundProduct && <div className="found-product"><ProductPreview data={foundProduct.data} /><div className="product-entry-fields"><label>Quantité<input type="number" min="0.001" step="0.001" value={newAmount} onChange={(event) => setNewAmount(event.target.value)} /></label><label>Unité<select value={newUnit} onChange={(event) => setNewUnit(event.target.value)}><option>unité</option><option>g</option><option>kg</option><option>ml</option><option>l</option></select></label><label><span>Date de péremption</span><div className="expiration-controls"><input type="date" value={expirationDate} onChange={(event) => setExpirationDate(event.target.value)} /><button type="button" className="expiration-button" onClick={() => addExpirationOffset(1)} aria-label="Ajouter un jour">＋</button><button type="button" className="expiration-button" onClick={() => addExpirationOffset(30)} aria-label="Ajouter un mois">＋＋</button><button type="button" className="expiration-button" onClick={() => addExpirationOffset(365)} aria-label="Ajouter un an">＋＋＋</button></div></label></div><button className="button button-primary button-wide" onClick={() => void saveProduct()} disabled={savingProduct || !Number.isFinite(Number(newAmount)) || Number(newAmount) <= 0}>{savingProduct ? 'Ajout en cours…' : 'Ajouter à la liste partagée'}<span>↗</span></button></div>}<p className="scanner-privacy">L’accès caméra est utilisé uniquement pour lire le code-barres.</p></section></div>}
     </div>
   )
 }
@@ -1961,7 +2206,11 @@ function ProductRow({ product, groupName, folderName, selected, consumeAmount, d
     touchTimer.current = null
   }
   const grade = product.nutriscore?.toLowerCase()
-  return <tr draggable className={`${product.expiration_date && isExpiringSoon(product.expiration_date) ? 'expiring-soon' : ''} ${dragging ? 'product-row-dragging' : ''}`} onDragStart={onDragStart} onDragEnd={onDragEnd} onTouchStart={startTouchDrag} onTouchEnd={clearTouchDrag} onTouchCancel={clearTouchDrag}><td><div className="consume-select"><input type="checkbox" checked={selected} onChange={(event) => onSelect(event.target.checked)} aria-label={`Sélectionner ${product.product_name} comme consommé`} />{selected && <input className="consume-amount" type="number" min="0.001" max={product.quantity} step="0.001" value={consumeAmount} onChange={(event) => onConsumeAmount(Number(event.target.value))} aria-label={`Quantité consommée de ${product.product_name}`} />}</div></td><td><div className="product-cell">{product.image_url ? <img className="product-image" src={product.image_url} alt="" loading="lazy" /> : <div className="product-placeholder">✳</div>}<div className="product-info"><strong>{product.product_name}</strong><span>{product.brand || product.barcode}{product.quantity_label ? ` · ${product.quantity_label}` : ''}{product.expiration_date ? ` · Expire le ${formatFrenchDate(product.expiration_date)}` : ''}</span>{folderName && <span className="group-badge">{folderName}</span>}{groupName && <span className="group-badge">{groupName}</span>}</div></div></td><td><span className="category-label">{product.category || 'Autre'}</span></td><td>{grade ? <span className={`score-badge grade-${grade}`}><strong>{grade.toUpperCase()}</strong><span>{gradeLabels[grade] || 'Nutri-Score'}</span></span> : <span className="score-unavailable">Non noté</span>}{product.nova_group && <span className="nova-label">NOVA {product.nova_group}</span>}</td><td><strong className="quantity-number">{product.quantity}</strong> <span className="quantity-unit">{product.quantity_unit}</span></td><td><div className="quantity-control"><button onClick={() => onQuantity(-1)} aria-label={`Retirer une unité de ${product.product_name}`}>−</button><span>{product.quantity}</span><button onClick={() => onQuantity(1)} aria-label={`Ajouter une unité de ${product.product_name}`}>+</button><button onClick={onAddToShopping} className="shopping-transfer" aria-label={`Ajouter ${product.product_name} à la liste de courses`}>＋＋</button></div></td></tr>
+  return <tr draggable className={`${product.expiration_date && isExpiringSoon(product.expiration_date) ? 'expiring-soon' : ''} ${dragging ? 'product-row-dragging' : ''}`} onDragStart={onDragStart} onDragEnd={onDragEnd} onTouchStart={startTouchDrag} onTouchEnd={clearTouchDrag} onTouchCancel={clearTouchDrag}><td><div className="consume-select"><input type="checkbox" checked={selected} onChange={(event) => onSelect(event.target.checked)} aria-label={`Sélectionner ${product.product_name} comme consommé`} />{selected && <input className="consume-amount" type="number" min="0.001" max={product.quantity} step="0.001" value={consumeAmount} onChange={(event) => onConsumeAmount(Number(event.target.value))} aria-label={`Quantité consommée de ${product.product_name}`} />}</div></td><td><div className="product-cell">{product.image_url ? <img className="product-image" src={product.image_url} alt="" loading="lazy" /> : <div className="product-placeholder">✳</div>}<div className="product-info"><strong>{product.product_name}</strong><span>{product.expiration_date ? `Péremption : ${formatFrenchDate(product.expiration_date)}` : 'Date de péremption non renseignée'}{product.brand ? ` · ${product.brand}` : ''}{product.quantity_label ? ` · ${product.quantity_label}` : ''}</span>{folderName && <span className="group-badge">{folderName}</span>}{groupName && <span className="group-badge">{groupName}</span>}</div></div></td><td><span className="category-label">{product.category || 'Autre'}</span></td><td>{grade ? <span className={`score-badge grade-${grade}`}><strong>{grade.toUpperCase()}</strong><span>{gradeLabels[grade] || 'Nutri-Score'}</span></span> : <span className="score-unavailable">Non noté</span>}{product.nova_group && <span className="nova-label">NOVA {product.nova_group}</span>}</td><td><strong className="quantity-number">{product.quantity}</strong> <span className="quantity-unit">{product.quantity_unit}</span></td><td><div className="quantity-control"><button onClick={() => onQuantity(-1)} aria-label={`Retirer une unité de ${product.product_name}`}>−</button><span>{product.quantity}</span><button onClick={() => onQuantity(1)} aria-label={`Ajouter une unité de ${product.product_name}`}>+</button><button onClick={onAddToShopping} className="shopping-transfer" aria-label={`Ajouter ${product.product_name} à la liste de courses`}>＋＋</button></div></td></tr>
+}
+
+function DestinationSelector({ value, onChange, disabled = false }: { value: 'inventory' | 'shopping'; onChange: (value: 'inventory' | 'shopping') => void; disabled?: boolean }) {
+  return <label className="destination-selector">Ajouter dans<select value={value} onChange={(event) => onChange(event.target.value as 'inventory' | 'shopping')} disabled={disabled}><option value="inventory">Inventaire</option><option value="shopping">Liste de courses</option></select></label>
 }
 
 function ProductPreview({ data }: { data: OffProduct }) {

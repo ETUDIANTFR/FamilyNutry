@@ -77,6 +77,8 @@ create table public.shopping_list_items (
   zone_id uuid not null references public.zones (id),
   name text not null check (length(trim(name)) between 1 and 120),
   is_checked boolean not null default false,
+  quantity numeric(10, 3) not null default 1 check (quantity > 0),
+  expiration_date date,
   created_by uuid not null references public.profiles (id) on delete cascade,
   created_at timestamptz not null default now()
 );

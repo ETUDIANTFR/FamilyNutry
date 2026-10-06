@@ -58,6 +58,8 @@ export type ShoppingListItem = {
   id: string
   name: string
   is_checked: boolean
+  quantity: number
+  expiration_date?: string | null
   created_by: string
   created_at: string
   zone_id: string
@@ -104,7 +106,7 @@ type Database = {
       products: Table<Product, Omit<Product, 'id' | 'created_at' | 'updated_at'> & Partial<Pick<Product, 'id' | 'created_at' | 'updated_at'>>>
       meals: Table<Meal, Omit<Meal, 'id' | 'created_at'> & Partial<Pick<Meal, 'id' | 'created_at'>>>
       calendar_events: Table<CalendarEvent, Omit<CalendarEvent, 'id' | 'created_at'> & Partial<Pick<CalendarEvent, 'id' | 'created_at'>>>
-      shopping_list_items: Table<ShoppingListItem, Omit<ShoppingListItem, 'id' | 'created_at'> & Partial<Pick<ShoppingListItem, 'id' | 'created_at'>>>
+      shopping_list_items: Table<ShoppingListItem, Omit<ShoppingListItem, 'id' | 'created_at' | 'quantity'> & Partial<Pick<ShoppingListItem, 'id' | 'created_at' | 'quantity'>>>
       storage_folders: Table<StorageFolder, Omit<StorageFolder, 'id' | 'created_at'> & Partial<Pick<StorageFolder, 'id' | 'created_at'>>>
       zones: Table<Zone, Pick<Zone, 'name'> & Partial<Pick<Zone, 'id' | 'created_by' | 'created_at'>>>
       zone_members: Table<ZoneMembership, Pick<ZoneMembership, 'zone_id' | 'user_id'> & Partial<Pick<ZoneMembership, 'created_at'>>>
