@@ -28,6 +28,7 @@ export type Product = {
   created_at: string
   updated_at: string
   zone_id: string
+  folder_id?: string | null
 }
 
 export type Meal = {
@@ -60,6 +61,20 @@ export type ShoppingListItem = {
   created_by: string
   created_at: string
   zone_id: string
+  image_url?: string | null
+  nutriscore?: string | null
+  folder_id?: string | null
+}
+
+export type StorageFolder = {
+  id: string
+  name: string
+  kind: 'inventory' | 'shopping'
+  icon: string
+  color: string
+  zone_id: string
+  created_by: string | null
+  created_at: string
 }
 
 export type Zone = {
@@ -90,6 +105,7 @@ type Database = {
       meals: Table<Meal, Omit<Meal, 'id' | 'created_at'> & Partial<Pick<Meal, 'id' | 'created_at'>>>
       calendar_events: Table<CalendarEvent, Omit<CalendarEvent, 'id' | 'created_at'> & Partial<Pick<CalendarEvent, 'id' | 'created_at'>>>
       shopping_list_items: Table<ShoppingListItem, Omit<ShoppingListItem, 'id' | 'created_at'> & Partial<Pick<ShoppingListItem, 'id' | 'created_at'>>>
+      storage_folders: Table<StorageFolder, Omit<StorageFolder, 'id' | 'created_at'> & Partial<Pick<StorageFolder, 'id' | 'created_at'>>>
       zones: Table<Zone, Pick<Zone, 'name'> & Partial<Pick<Zone, 'id' | 'created_by' | 'created_at'>>>
       zone_members: Table<ZoneMembership, Pick<ZoneMembership, 'zone_id' | 'user_id'> & Partial<Pick<ZoneMembership, 'created_at'>>>
     }

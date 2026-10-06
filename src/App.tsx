@@ -1,8 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { Html5Qrcode } from 'html5-qrcode'
-import type { ChangeEvent, FormEvent } from 'react'
+import type { ChangeEvent, CSSProperties, FormEvent } from 'react'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
-import type { CalendarEvent, Meal, Product, Profile, ShoppingListItem, Zone, ZoneMembership } from './lib/supabase'
+import type { CalendarEvent, Meal, Product, Profile, ShoppingListItem, StorageFolder, Zone, ZoneMembership } from './lib/supabase'
 import type { CalendarEventMove } from './SharedCalendar'
 import './App.css'
 
@@ -76,6 +76,12 @@ function App() {
   const [shoppingItems, setShoppingItems] = useState<ShoppingListItem[]>([])
   const [shoppingItemName, setShoppingItemName] = useState('')
   const [addingShoppingItem, setAddingShoppingItem] = useState(false)
+  const [folders, setFolders] = useState<StorageFolder[]>([])
+  const [newFolderName, setNewFolderName] = useState('')
+  const [savingFolder, setSavingFolder] = useState(false)
+  const [newFolderKind, setNewFolderKind] = useState<'inventory' | 'shopping'>('inventory')
+  const [newFolderIcon, setNewFolderIcon] = useState('📁')
+  const [newFolderColor, setNewFolderColor] = useState('#dfe9d8')
   const [meals, setMeals] = useState<Meal[]>([])
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([])
   const [zones, setZones] = useState<Zone[]>([])
@@ -134,6 +140,9 @@ function App() {
   const activeZoneId = selectedZoneId && zones.some((zone) => zone.id === selectedZoneId) ? selectedZoneId : null
   const effectiveWriteZoneId = zones.some((zone) => zone.id === writeZoneId) ? writeZoneId : zones[0]?.id ?? ''
   const creationZoneId = activeZoneId ?? effectiveWriteZoneId
+  const inventoryFolders = folders.filter((folder) => folder.kind === 'inventory')
+  const shoppingFolders = folders.filter((folder) => folder.kind === 'shopping')
+  const getFolderName = (folderId?: string | null) => folders.find((folder) => folder.id === folderId)?.name ?? 'Dossier'
   const loadProducts = useCallback(async () => {
     const { data, error } = await supabase.from('products').select('*').order('updated_at', { ascending: false })
     if (error) {
@@ -193,6 +202,35 @@ function App() {
     setShoppingItems(data ?? [])
   }, [])
 
+  const loadFolders = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('storage_folders')
+      .select('*')
+      .order('kind')
+      .order('name')
+    if (error) {
+      setNotice({ type: 'error', text: `Impossible de charger les dossiers : ${error.message}` })
+      return
+    }
+    setFolders(data ?? [])
+  }, [])
+
+  const ensureDefaultFolders = useCallback(async () => {
+    if (!sessionUser || zones.length === 0) return
+    const defaultFolders: Array<Pick<StorageFolder, 'name' | 'kind' | 'icon' | 'color' | 'zone_id' | 'created_by'>> = zones.flatMap((zone) => [
+      { name: 'Frigo', kind: 'inventory' as const, icon: '🧊', color: '#dfeeff', zone_id: zone.id, created_by: sessionUser.id },
+      { name: 'Congélateur', kind: 'inventory' as const, icon: '❄', color: '#eaf5ff', zone_id: zone.id, created_by: sessionUser.id },
+      { name: 'Étagère', kind: 'inventory' as const, icon: '▤', color: '#f2e4d4', zone_id: zone.id, created_by: sessionUser.id },
+      { name: 'Nature', kind: 'shopping' as const, icon: '🛒', color: '#e3f1dc', zone_id: zone.id, created_by: sessionUser.id },
+    ])
+    const { error } = await supabase.from('storage_folders').upsert(defaultFolders, { onConflict: 'zone_id,kind,name' })
+    if (error) {
+      setNotice({ type: 'error', text: `Création des dossiers par défaut impossible : ${error.message}` })
+      return
+    }
+    await loadFolders()
+  }, [loadFolders, sessionUser, zones])
+
   const loadPendingUsers = useCallback(async () => {
     const { data, error } = await supabase.from('profiles').select('*').eq('status', 'pending').order('created_at')
     if (error) {
@@ -225,6 +263,7 @@ function App() {
     if (data?.status === 'approved') {
       void loadProducts()
       void loadShoppingItems()
+      void loadFolders()
       void loadMeals()
       void loadCalendarEvents()
       void loadZones()
@@ -234,7 +273,7 @@ function App() {
         void loadZoneMemberships()
       }
     }
-  }, [loadProducts, loadShoppingItems, loadMeals, loadCalendarEvents, loadZones, loadPendingUsers, loadMemberUsers, loadZoneMemberships])
+  }, [loadProducts, loadShoppingItems, loadFolders, loadMeals, loadCalendarEvents, loadZones, loadPendingUsers, loadMemberUsers, loadZoneMemberships])
 
   useEffect(() => {
     let active = true
@@ -263,6 +302,13 @@ function App() {
           .order('created_at')
         if (shoppingError) setNotice({ type: 'error', text: `Impossible de charger la liste de courses : ${shoppingError.message}` })
         if (active) setShoppingItems(shoppingData ?? [])
+        const { data: folderData, error: foldersError } = await supabase
+          .from('storage_folders')
+          .select('*')
+          .order('kind')
+          .order('name')
+        if (foldersError) setNotice({ type: 'error', text: `Impossible de charger les dossiers : ${foldersError.message}` })
+        if (active) setFolders(folderData ?? [])
         const { data: calendarData, error: calendarError } = await supabase
           .from('calendar_events')
           .select('*')
@@ -301,6 +347,7 @@ function App() {
         setProfile(null)
         setProducts([])
         setShoppingItems([])
+        setFolders([])
         setMeals([])
         setCalendarEvents([])
         setZones([])
@@ -356,7 +403,16 @@ function App() {
     return () => {
       void supabase.removeChannel(channel)
     }
-  }, [loadProducts, loadShoppingItems, loadMeals, loadCalendarEvents, loadZones, loadZoneMemberships, loadPendingUsers, loadMemberUsers, loadProfile, profile, sessionUser])
+  }, [loadProducts, loadShoppingItems, loadFolders, loadMeals, loadCalendarEvents, loadZones, loadZoneMemberships, loadPendingUsers, loadMemberUsers, loadProfile, profile, sessionUser])
+
+  useEffect(() => {
+    if (profile?.role === 'admin') setDarkMode(true)
+  }, [profile])
+
+  useEffect(() => {
+    if (!profile || profile.status !== 'approved' || !sessionUser) return
+    void ensureDefaultFolders()
+  }, [ensureDefaultFolders, profile, sessionUser])
 
   const lookupBarcode = useCallback(async (value: string) => {
     const code = value.trim().replace(/\s/g, '')
@@ -544,6 +600,32 @@ function App() {
     await loadZoneMemberships()
   }
 
+  async function createFolder(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!sessionUser || !creationZoneId) return
+    const name = newFolderName.trim()
+    if (!name) return
+    setSavingFolder(true)
+    const { error } = await supabase.from('storage_folders').insert({
+      name,
+      kind: newFolderKind,
+      icon: newFolderIcon.trim() || '📁',
+      color: newFolderColor,
+      zone_id: creationZoneId,
+      created_by: sessionUser.id,
+    })
+    if (error) {
+      setNotice({ type: 'error', text: `Création du dossier impossible : ${error.message}` })
+    } else {
+      setNewFolderName('')
+      setNewFolderIcon('📁')
+      setNewFolderColor('#dfe9d8')
+      setNotice({ type: 'success', text: `Le dossier « ${name} » a été créé.` })
+      await loadFolders()
+    }
+    setSavingFolder(false)
+  }
+
   async function addShoppingItem(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!sessionUser || !creationZoneId) return
@@ -564,6 +646,54 @@ function App() {
       await loadShoppingItems()
     }
     setAddingShoppingItem(false)
+  }
+
+  async function addProductToShopping(product: Product) {
+    if (!sessionUser) return
+    const folderId = folders.find((folder) => folder.zone_id === product.zone_id && folder.kind === 'shopping')?.id ?? null
+    const { error } = await supabase.from('shopping_list_items').insert({
+      name: product.product_name,
+      is_checked: false,
+      created_by: sessionUser.id,
+      zone_id: product.zone_id,
+      image_url: product.image_url,
+      nutriscore: product.nutriscore,
+      folder_id: folderId,
+    })
+    if (error) {
+      setNotice({ type: 'error', text: `Ajout à la liste de courses impossible : ${error.message}` })
+    } else {
+      setNotice({ type: 'success', text: `${product.product_name} a été ajouté à la liste de courses.` })
+      await loadShoppingItems()
+    }
+  }
+
+  async function addShoppingItemToInventory(item: ShoppingListItem) {
+    if (!sessionUser) return
+    const folderId = folders.find((folder) => folder.zone_id === item.zone_id && folder.kind === 'inventory')?.id ?? null
+    const { error } = await supabase.from('products').insert({
+      barcode: `SHOPPING-${crypto.randomUUID()}`,
+      product_name: item.name,
+      brand: null,
+      quantity_label: null,
+      category: null,
+      nutriscore: item.nutriscore ?? null,
+      nova_group: null,
+      image_url: item.image_url ?? null,
+      quantity: 1,
+      quantity_unit: 'unité',
+      expiration_date: null,
+      folder_id: folderId,
+      created_by: sessionUser.id,
+      updated_by: sessionUser.id,
+      zone_id: item.zone_id,
+    })
+    if (error) {
+      setNotice({ type: 'error', text: `Ajout à l’inventaire impossible : ${error.message}` })
+    } else {
+      setNotice({ type: 'success', text: `${item.name} a été ajouté à l’inventaire.` })
+      await loadProducts()
+    }
   }
 
   async function toggleShoppingItem(item: ShoppingListItem) {
@@ -615,7 +745,7 @@ function App() {
     setSavingProduct(true)
     setNotice(null)
     const grade = (foundProduct.data.nutriscore_grade || foundProduct.data.nutrition_grades || '').toLowerCase()
-    const { data: existing, error: findError } = await supabase.from('products').select('id, quantity, quantity_unit, expiration_date').eq('zone_id', creationZoneId).eq('barcode', foundProduct.barcode).maybeSingle()
+    const { data: existing, error: findError } = await supabase.from('products').select('id, quantity, quantity_unit, expiration_date, folder_id').eq('zone_id', creationZoneId).eq('barcode', foundProduct.barcode).maybeSingle()
     if (findError) {
       setNotice({ type: 'error', text: `Vérification du produit impossible : ${findError.message}` })
       setSavingProduct(false)
@@ -641,6 +771,7 @@ function App() {
       quantity: Number(newAmount),
       quantity_unit: newUnit,
       expiration_date: expirationDate || existing?.expiration_date || null,
+      folder_id: existing?.folder_id ?? null,
       updated_by: sessionUser.id,
       zone_id: creationZoneId,
     }
@@ -705,6 +836,7 @@ function App() {
       quantity: amount,
       quantity_unit: manualUnit,
       expiration_date: expirationDate || null,
+      folder_id: null,
       created_by: sessionUser.id,
       updated_by: sessionUser.id,
       zone_id: creationZoneId,
@@ -786,6 +918,11 @@ function App() {
       setNotice({ type: 'info', text: `${meal.name} a été retiré du planning.` })
       await loadMeals()
     }
+  }
+
+  function addExpirationOffset(days: number) {
+    if (!expirationDate) return
+    setExpirationDate(addDaysToDate(expirationDate, days))
   }
 
   function openCalendarEvent(date?: Date, allDay = false) {
@@ -1158,9 +1295,34 @@ function App() {
               <section className="list-section">
                 <div className="list-toolbar"><div><h2>Vos produits <span className="subtle-count">{groupProducts.length}</span></h2><p>Mis à jour par les membres de votre groupe.</p></div><div className="list-actions"><button className="button button-secondary" onClick={() => void copyProducts()}>Copier toute la liste</button><label className="search-box"><span>⌕</span><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Rechercher un produit…" /></label></div></div>
                 {Object.keys(selectedProducts).some((id) => visibleProducts.some((product) => product.id === id)) && <div className="consume-bar"><span>{visibleProducts.filter((product) => selectedProducts[product.id] !== undefined).length} produit(s) sélectionné(s) — saisissez la quantité consommée dans chaque ligne.</span><button className="button button-primary" onClick={() => void consumeSelected()}>Enregistrer la consommation</button><button className="text-button" onClick={() => setSelectedProducts({})}>Annuler</button></div>}
+                <div className="folder-panel">
+                  <div className="folder-panel-heading">
+                    <div><h2>Dossiers de l’inventaire</h2><p>Organisez les produits par emplacement.</p></div>
+                    <span className="subtle-count">{inventoryFolders.length}</span>
+                  </div>
+                  <div className="folder-list">
+                    {inventoryFolders.length === 0 ? <div className="empty-filter">Aucun dossier pour l’inventaire.</div> : inventoryFolders.map((folder) => (
+                      <div className="folder-card" key={folder.id} style={{ '--folder-color': folder.color } as CSSProperties}>
+                        <span className="folder-icon" aria-hidden="true">{folder.icon}</span>
+                        <strong>{folder.name}</strong>
+                        <span>{groupProducts.filter((product) => product.folder_id === folder.id).length} produit(s)</span>
+                      </div>
+                    ))}
+                  </div>
+                  <form className="folder-create-form" onSubmit={(event) => void createFolder(event)}>
+                    <input value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} placeholder="Nom du dossier" maxLength={80} required />
+                    <select value={newFolderKind} onChange={(event) => setNewFolderKind(event.target.value as 'inventory' | 'shopping')}>
+                      <option value="inventory">Inventaire</option>
+                      <option value="shopping">Liste de courses</option>
+                    </select>
+                    <input value={newFolderIcon} onChange={(event) => setNewFolderIcon(event.target.value)} maxLength={4} aria-label="Icône du dossier" />
+                    <input type="color" value={newFolderColor} onChange={(event) => setNewFolderColor(event.target.value)} aria-label="Couleur du dossier" />
+                    <button className="button button-primary" type="submit" disabled={savingFolder || !newFolderName.trim()}>{savingFolder ? 'Création…' : 'Créer un dossier'}</button>
+                  </form>
+                </div>
                 {groupProducts.length === 0 ? <EmptyState onScan={openScanner} /> : visibleProducts.length === 0 ? <div className="empty-filter">Aucun produit ne correspond à « {search} ».</div> : (
                   <div className="product-table-wrap"><table className="product-table"><thead><tr><th>CONSOMMÉ</th><th>PRODUIT</th><th>CATÉGORIE</th><th>NUTRI-SCORE</th><th>STOCK</th><th>AJUSTEMENT</th></tr></thead><tbody>
-                    {visibleProducts.map((product) => <ProductRow key={product.id} product={product} groupName={showGroupNames ? getZoneName(product.zone_id) : undefined} selected={selectedProducts[product.id] !== undefined} consumeAmount={selectedProducts[product.id] ?? 1} onSelect={(checked) => setSelectedProducts((current) => { const next = { ...current }; if (checked) next[product.id] = 1; else delete next[product.id]; return next })} onConsumeAmount={(amount) => setSelectedProducts((current) => ({ ...current, [product.id]: amount }))} onQuantity={(delta) => void changeQuantity(product, delta)} />)}
+                    {visibleProducts.map((product) => <ProductRow key={product.id} product={product} groupName={showGroupNames ? getZoneName(product.zone_id) : undefined} folderName={getFolderName(product.folder_id)} selected={selectedProducts[product.id] !== undefined} consumeAmount={selectedProducts[product.id] ?? 1} onSelect={(checked) => setSelectedProducts((current) => { const next = { ...current }; if (checked) next[product.id] = 1; else delete next[product.id]; return next })} onConsumeAmount={(amount) => setSelectedProducts((current) => ({ ...current, [product.id]: amount }))} onQuantity={(delta) => void changeQuantity(product, delta)} onAddToShopping={() => void addProductToShopping(product)} />)}
                   </tbody></table></div>
                 )}
                 <div className="source-note"><span>ⓘ</span> Notes nutritionnelles fournies par <a href="https://world.openfoodfacts.org/" target="_blank" rel="noreferrer">Open Food Facts</a>. Le Nutri-Score ne remplace pas un avis médical.</div>
@@ -1189,6 +1351,31 @@ function App() {
                   {addingShoppingItem ? 'Ajout…' : '＋ Ajouter'}
                 </button>
               </form>
+              <div className="folder-panel">
+                <div className="folder-panel-heading">
+                  <div><h2>Dossiers de la liste de courses</h2><p>Classez vos achats dans un dossier.</p></div>
+                  <span className="subtle-count">{shoppingFolders.length}</span>
+                </div>
+                <div className="folder-list">
+                  {shoppingFolders.length === 0 ? <div className="empty-filter">Aucun dossier pour les courses.</div> : shoppingFolders.map((folder) => (
+                    <div className="folder-card" key={folder.id} style={{ '--folder-color': folder.color } as CSSProperties}>
+                      <span className="folder-icon" aria-hidden="true">{folder.icon}</span>
+                      <strong>{folder.name}</strong>
+                      <span>{groupShoppingItems.filter((item) => item.folder_id === folder.id).length} article(s)</span>
+                    </div>
+                  ))}
+                </div>
+                <form className="folder-create-form" onSubmit={(event) => void createFolder(event)}>
+                  <input value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} placeholder="Nom du dossier" maxLength={80} required />
+                  <select value={newFolderKind} onChange={(event) => setNewFolderKind(event.target.value as 'inventory' | 'shopping')}>
+                    <option value="inventory">Inventaire</option>
+                    <option value="shopping">Liste de courses</option>
+                  </select>
+                  <input value={newFolderIcon} onChange={(event) => setNewFolderIcon(event.target.value)} maxLength={4} aria-label="Icône du dossier" />
+                  <input type="color" value={newFolderColor} onChange={(event) => setNewFolderColor(event.target.value)} aria-label="Couleur du dossier" />
+                  <button className="button button-primary" type="submit" disabled={savingFolder || !newFolderName.trim()}>{savingFolder ? 'Création…' : 'Créer un dossier'}</button>
+                </form>
+              </div>
               <div className="shopping-list-panel">
                 <div className="shopping-list-heading">
                   <div>
@@ -1211,6 +1398,7 @@ function App() {
                   <ul className="shopping-items">
                     {groupShoppingItems.map((item) => (
                       <li className={`shopping-item ${item.is_checked ? 'checked' : ''}`} key={item.id}>
+                        {item.image_url ? <img className="shopping-item-image" src={item.image_url} alt="" loading="lazy" /> : <div className="shopping-item-image shopping-item-placeholder">✳</div>}
                         <label>
                           <input
                             type="checkbox"
@@ -1219,8 +1407,17 @@ function App() {
                             aria-label={`${item.is_checked ? 'Décocher' : 'Cocher'} ${item.name}`}
                           />
                           <span>{item.name}</span>
+                          {item.nutriscore && <span className={`score-badge grade-${item.nutriscore}`}><strong>{item.nutriscore.toUpperCase()}</strong></span>}
                         </label>
+                        {item.folder_id && <span className="group-badge">{getFolderName(item.folder_id)}</span>}
                         {showGroupNames && <span className="group-badge">{getZoneName(item.zone_id)}</span>}
+                        <button
+                          className="shopping-add-inventory"
+                          type="button"
+                          title={`Ajouter ${item.name} à l’inventaire`}
+                          aria-label={`Ajouter ${item.name} à l’inventaire`}
+                          onClick={() => void addShoppingItemToInventory(item)}
+                        >＋</button>
                         <button
                           className="shopping-delete"
                           type="button"
@@ -1471,12 +1668,11 @@ function App() {
           </section>
         </div>
       )}
-      {manualOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setManualOpen(false) }}><section className="scanner-modal manual-modal" role="dialog" aria-modal="true" aria-labelledby="manual-title"><button className="modal-close" onClick={() => setManualOpen(false)} aria-label="Fermer">×</button><span className="eyebrow">AJOUTER À LA LISTE</span><h2 id="manual-title">Saisie manuelle</h2><p className="modal-description">Ajoutez un produit même s’il n’a pas de code-barres.</p><form className="manual-form" onSubmit={(event) => void saveManualProduct(event)}><label>Nom du produit<input value={manualName} onChange={(event) => setManualName(event.target.value)} placeholder="Ex. farine de blé" required maxLength={120} /></label><label>Quantité<input type="number" min="0.001" step="0.001" value={manualAmount} onChange={(event) => setManualAmount(event.target.value)} required /></label><label>Unité<select value={manualUnit} onChange={(event) => setManualUnit(event.target.value)}><option>unité</option><option>g</option><option>kg</option><option>ml</option><option>l</option></select></label><label>Date de péremption<input type="date" value={expirationDate} onChange={(event) => setExpirationDate(event.target.value)} /></label><button className="button button-primary button-wide" disabled={savingProduct}>{savingProduct ? 'Ajout en cours…' : 'Ajouter à la liste'}<span>↗</span></button></form></section></div>}
-      {scannerOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setScannerOpen(false) }}><section className="scanner-modal" role="dialog" aria-modal="true" aria-labelledby="scanner-title"><button className="modal-close" onClick={() => setScannerOpen(false)} aria-label="Fermer">×</button><span className="eyebrow">AJOUTER À LA LISTE</span><h2 id="scanner-title">Scanner un produit</h2><p className="modal-description">Pointez la caméra sur le code-barres du produit.</p><div className="scanner-frame">{scannerOpen && <div id="qr-reader" />}{!scanning && <div className="scanner-placeholder"><span>▣</span><p>Autorisez l’accès à la caméra<br />pour scanner le code-barres.</p></div>}</div><div className="scanner-divider"><span>OU SAISIR LE CODE</span></div><form className="barcode-form" onSubmit={(event) => void lookupProduct(event)}><input value={barcode} onChange={(event) => { setBarcode(event.target.value); setFoundProduct(null) }} placeholder="Ex. 3017620422003" inputMode="numeric" aria-label="Code-barres du produit" /><button className="button button-primary" disabled={lookupBusy || !barcode.trim()}>{lookupBusy ? 'Recherche…' : 'Rechercher'}</button></form>{foundProduct && <div className="found-product"><ProductPreview data={foundProduct.data} /><div className="product-entry-fields"><label>Quantité<input type="number" min="0.001" step="0.001" value={newAmount} onChange={(event) => setNewAmount(event.target.value)} /></label><label>Unité<select value={newUnit} onChange={(event) => setNewUnit(event.target.value)}><option>unité</option><option>g</option><option>kg</option><option>ml</option><option>l</option></select></label><label>Date de péremption<input type="date" value={expirationDate} onChange={(event) => setExpirationDate(event.target.value)} /></label></div><button className="button button-primary button-wide" onClick={() => void saveProduct()} disabled={savingProduct || !Number.isFinite(Number(newAmount)) || Number(newAmount) <= 0}>{savingProduct ? 'Ajout en cours…' : 'Ajouter à la liste partagée'}<span>↗</span></button></div>}<p className="scanner-privacy">L’accès caméra est utilisé uniquement pour lire le code-barres.</p></section></div>}
+      {manualOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setManualOpen(false) }}><section className="scanner-modal manual-modal" role="dialog" aria-modal="true" aria-labelledby="manual-title"><button className="modal-close" onClick={() => setManualOpen(false)} aria-label="Fermer">×</button><span className="eyebrow">AJOUTER À LA LISTE</span><h2 id="manual-title">Saisie manuelle</h2><p className="modal-description">Ajoutez un produit même s’il n’a pas de code-barres.</p><form className="manual-form" onSubmit={(event) => void saveManualProduct(event)}><label>Nom du produit<input value={manualName} onChange={(event) => setManualName(event.target.value)} placeholder="Ex. farine de blé" required maxLength={120} /></label><label>Quantité<input type="number" min="0.001" step="0.001" value={manualAmount} onChange={(event) => setManualAmount(event.target.value)} required /></label><label>Unité<select value={manualUnit} onChange={(event) => setManualUnit(event.target.value)}><option>unité</option><option>g</option><option>kg</option><option>ml</option><option>l</option></select></label><label><span>Date de péremption</span><div className="expiration-controls"><input type="date" value={expirationDate} onChange={(event) => setExpirationDate(event.target.value)} /><button type="button" className="expiration-button" onClick={() => addExpirationOffset(1)} aria-label="Ajouter un jour">＋</button><button type="button" className="expiration-button" onClick={() => addExpirationOffset(30)} aria-label="Ajouter un mois">＋＋</button><button type="button" className="expiration-button" onClick={() => addExpirationOffset(365)} aria-label="Ajouter un an">＋＋＋</button></div></label><button className="button button-primary button-wide" disabled={savingProduct}>{savingProduct ? 'Ajout en cours…' : 'Ajouter à la liste'}<span>↗</span></button></form></section></div>}
+      {scannerOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setScannerOpen(false) }}><section className="scanner-modal" role="dialog" aria-modal="true" aria-labelledby="scanner-title"><button className="modal-close" onClick={() => setScannerOpen(false)} aria-label="Fermer">×</button><span className="eyebrow">AJOUTER À LA LISTE</span><h2 id="scanner-title">Scanner un produit</h2><p className="modal-description">Pointez la caméra sur le code-barres du produit.</p><div className="scanner-frame">{scannerOpen && <div id="qr-reader" />}{!scanning && <div className="scanner-placeholder"><span>▣</span><p>Autorisez l’accès à la caméra<br />pour scanner le code-barres.</p></div>}</div><div className="scanner-divider"><span>OU SAISIR LE CODE</span></div><form className="barcode-form" onSubmit={(event) => void lookupProduct(event)}><input value={barcode} onChange={(event) => { setBarcode(event.target.value); setFoundProduct(null) }} placeholder="Ex. 3017620422003" inputMode="numeric" aria-label="Code-barres du produit" /><button className="button button-primary" disabled={lookupBusy || !barcode.trim()}>{lookupBusy ? 'Recherche…' : 'Rechercher'}</button></form>{foundProduct && <div className="found-product"><ProductPreview data={foundProduct.data} /><div className="product-entry-fields"><label>Quantité<input type="number" min="0.001" step="0.001" value={newAmount} onChange={(event) => setNewAmount(event.target.value)} /></label><label>Unité<select value={newUnit} onChange={(event) => setNewUnit(event.target.value)}><option>unité</option><option>g</option><option>kg</option><option>ml</option><option>l</option></select></label><label><span>Date de péremption</span><div className="expiration-controls"><input type="date" value={expirationDate} onChange={(event) => setExpirationDate(event.target.value)} /><button type="button" className="expiration-button" onClick={() => addExpirationOffset(1)} aria-label="Ajouter un jour">＋</button><button type="button" className="expiration-button" onClick={() => addExpirationOffset(30)} aria-label="Ajouter un mois">＋＋</button><button type="button" className="expiration-button" onClick={() => addExpirationOffset(365)} aria-label="Ajouter un an">＋＋＋</button></div></label></div><button className="button button-primary button-wide" onClick={() => void saveProduct()} disabled={savingProduct || !Number.isFinite(Number(newAmount)) || Number(newAmount) <= 0}>{savingProduct ? 'Ajout en cours…' : 'Ajouter à la liste partagée'}<span>↗</span></button></div>}<p className="scanner-privacy">L’accès caméra est utilisé uniquement pour lire le code-barres.</p></section></div>}
     </div>
   )
 }
-
 function parsePack(label: string | null | undefined): { amount: number; unit: string } {
   const text = label?.trim().toLocaleLowerCase('fr') ?? ''
   const count = text.match(/(\d+(?:[.,]\d+)?)\s*(?:x|×)\s*\d/)
@@ -1491,6 +1687,24 @@ function parsePack(label: string | null | undefined): { amount: number; unit: st
       : { amount, unit: massOrVolume[2] }
   }
   return { amount: 1, unit: 'unité' }
+}
+
+function formatFrenchDate(date: string | null) {
+  if (!date) return ''
+  return new Date(`${date}T12:00:00`).toLocaleDateString('fr-FR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  })
+}
+
+function isExpiringSoon(date: string | null) {
+  if (!date) return false
+  const expiresAt = new Date(`${date}T12:00:00`)
+  const today = new Date()
+  const weekLater = new Date(today)
+  weekLater.setUTCDate(today.getUTCDate() + 7)
+  return expiresAt >= today && expiresAt <= weekLater
 }
 
 function authMessage(error: unknown) {
@@ -1514,9 +1728,9 @@ function StatCard({ label, value, caption, icon, tone }: { label: string; value:
   return <article className="stat-card"><div className="stat-card-top"><span>{label}</span><span className={`stat-icon stat-${tone}`}>{icon}</span></div><div className="stat-value">{value}</div><div className="stat-caption">{caption}</div></article>
 }
 
-function ProductRow({ product, groupName, selected, consumeAmount, onSelect, onConsumeAmount, onQuantity }: { product: Product; groupName?: string; selected: boolean; consumeAmount: number; onSelect: (checked: boolean) => void; onConsumeAmount: (amount: number) => void; onQuantity: (delta: number) => void }) {
+function ProductRow({ product, groupName, folderName, selected, consumeAmount, onSelect, onConsumeAmount, onQuantity, onAddToShopping }: { product: Product; groupName?: string; folderName?: string; selected: boolean; consumeAmount: number; onSelect: (checked: boolean) => void; onConsumeAmount: (amount: number) => void; onQuantity: (delta: number) => void; onAddToShopping: () => void }) {
   const grade = product.nutriscore?.toLowerCase()
-  return <tr><td><div className="consume-select"><input type="checkbox" checked={selected} onChange={(event) => onSelect(event.target.checked)} aria-label={`Sélectionner ${product.product_name} comme consommé`} />{selected && <input className="consume-amount" type="number" min="0.001" max={product.quantity} step="0.001" value={consumeAmount} onChange={(event) => onConsumeAmount(Number(event.target.value))} aria-label={`Quantité consommée de ${product.product_name}`} />}</div></td><td><div className="product-cell">{product.image_url ? <img className="product-image" src={product.image_url} alt="" loading="lazy" /> : <div className="product-placeholder">✳</div>}<div className="product-info"><strong>{product.product_name}</strong><span>{product.brand || product.barcode}{product.quantity_label ? ` · ${product.quantity_label}` : ''}{product.expiration_date ? ` · Expire le ${new Date(`${product.expiration_date}T12:00:00`).toLocaleDateString('fr-FR')}` : ''}</span>{groupName && <span className="group-badge">{groupName}</span>}</div></div></td><td><span className="category-label">{product.category || 'Autre'}</span></td><td>{grade ? <span className={`score-badge grade-${grade}`}><strong>{grade.toUpperCase()}</strong><span>{gradeLabels[grade] || 'Nutri-Score'}</span></span> : <span className="score-unavailable">Non noté</span>}{product.nova_group && <span className="nova-label">NOVA {product.nova_group}</span>}</td><td><strong className="quantity-number">{product.quantity}</strong> <span className="quantity-unit">{product.quantity_unit}</span></td><td><div className="quantity-control"><button onClick={() => onQuantity(-1)} aria-label={`Retirer une unité de ${product.product_name}`}>−</button><span>{product.quantity}</span><button onClick={() => onQuantity(1)} aria-label={`Ajouter une unité de ${product.product_name}`}>+</button></div></td></tr>
+  return <tr className={product.expiration_date && isExpiringSoon(product.expiration_date) ? 'expiring-soon' : undefined}><td><div className="consume-select"><input type="checkbox" checked={selected} onChange={(event) => onSelect(event.target.checked)} aria-label={`Sélectionner ${product.product_name} comme consommé`} />{selected && <input className="consume-amount" type="number" min="0.001" max={product.quantity} step="0.001" value={consumeAmount} onChange={(event) => onConsumeAmount(Number(event.target.value))} aria-label={`Quantité consommée de ${product.product_name}`} />}</div></td><td><div className="product-cell">{product.image_url ? <img className="product-image" src={product.image_url} alt="" loading="lazy" /> : <div className="product-placeholder">✳</div>}<div className="product-info"><strong>{product.product_name}</strong><span>{product.brand || product.barcode}{product.quantity_label ? ` · ${product.quantity_label}` : ''}{product.expiration_date ? ` · Expire le ${formatFrenchDate(product.expiration_date)}` : ''}</span>{folderName && <span className="group-badge">{folderName}</span>}{groupName && <span className="group-badge">{groupName}</span>}</div></div></td><td><span className="category-label">{product.category || 'Autre'}</span></td><td>{grade ? <span className={`score-badge grade-${grade}`}><strong>{grade.toUpperCase()}</strong><span>{gradeLabels[grade] || 'Nutri-Score'}</span></span> : <span className="score-unavailable">Non noté</span>}{product.nova_group && <span className="nova-label">NOVA {product.nova_group}</span>}</td><td><strong className="quantity-number">{product.quantity}</strong> <span className="quantity-unit">{product.quantity_unit}</span></td><td><div className="quantity-control"><button onClick={() => onQuantity(-1)} aria-label={`Retirer une unité de ${product.product_name}`}>−</button><span>{product.quantity}</span><button onClick={() => onQuantity(1)} aria-label={`Ajouter une unité de ${product.product_name}`}>+</button><button onClick={onAddToShopping} className="shopping-transfer" aria-label={`Ajouter ${product.product_name} à la liste de courses`}>＋＋</button></div></td></tr>
 }
 
 function ProductPreview({ data }: { data: OffProduct }) {
