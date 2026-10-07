@@ -343,14 +343,7 @@ function App() {
         return
       }
     }
-    const zoneDefaults: Array<Pick<StorageFolder, 'name' | 'kind' | 'icon' | 'color' | 'zone_id' | 'created_by'>> = zones.map((zone) => ({
-      name: 'Nature',
-      kind: 'shopping',
-      icon: '🛒',
-      color: '#e3f1dc',
-      zone_id: zone.id,
-      created_by: sessionUser.id,
-    }))
+
     const { error } = await supabase.from('storage_folders').upsert(zoneDefaults, { onConflict: 'zone_id,kind,name' })
     if (error) {
       setNotice({ type: 'error', text: `Création des dossiers par défaut impossible : ${error.message}` })
