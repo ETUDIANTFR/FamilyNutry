@@ -442,6 +442,12 @@
   font-size: 13px;
 }
 
+html[data-theme='dark'] .loading-screen {
+  color-scheme: dark;
+  color: #a5afa3;
+  background: #151a16;
+}
+
 .loading-screen .brand-mark {
   justify-self: center;
   width: 40px;
@@ -1188,6 +1194,15 @@
   overflow: hidden;
   color: #999f96;
   font-size: 9px;
+}
+
+.product-info > span:first-of-type,
+.shopping-item > label > span:first-of-type {
+  touch-action: manipulation;
+}
+
+.product-info > span:first-of-type {
+  cursor: pointer;
   text-overflow: ellipsis;
 }
 
@@ -1326,14 +1341,6 @@
   color: #73806f;
   background: transparent;
   font-size: 14px;
-}
-
-.quantity-control .shopping-transfer {
-  width: 32px;
-  border-radius: 4px;
-  color: #3c724d;
-  font-size: 10px;
-  font-weight: 700;
 }
 
 .quantity-control button:hover {
@@ -2163,6 +2170,24 @@ html[data-theme='dark'] .folder-create-form label {
   border-bottom: 1px solid #f0f1ed;
 }
 
+.shopping-item-image {
+  display: grid;
+  width: 37px;
+  height: 39px;
+  flex: 0 0 37px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid #f0f1ed;
+  border-radius: 5px;
+  color: #829a71;
+  background: #f6f7f1;
+  object-fit: contain;
+}
+
+.shopping-item-placeholder {
+  font-size: 15px;
+}
+
 .shopping-item:last-child {
   border-bottom: 0;
 }
@@ -2262,6 +2287,13 @@ html[data-theme='dark'] .folder-create-form label {
   background: transparent;
   font-size: 10px;
   text-align: center;
+  appearance: textfield;
+}
+
+.shopping-quantity-control input::-webkit-inner-spin-button,
+.shopping-quantity-control input::-webkit-outer-spin-button {
+  margin: 0;
+  appearance: none;
 }
 
 .destination-selector {
@@ -2284,6 +2316,37 @@ html[data-theme='dark'] .folder-create-form label {
   background: #fff;
   font: inherit;
   font-size: 11px;
+}
+
+.expiration-edit-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.expiration-edit-form > label {
+  display: grid;
+  gap: 7px;
+  color: #596255;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.expiration-edit-form input {
+  min-height: 42px;
+  padding: 0 10px;
+  border: 1px solid #e4e8df;
+  border-radius: 5px;
+  color: #414940;
+  background: #fff;
+  font: inherit;
+  font-size: 13px;
+}
+
+.expiration-edit-form > p {
+  margin: 0;
+  color: #858b81;
+  font-size: 10px;
 }
 
 .shopping-item input {
@@ -3490,6 +3553,74 @@ html[data-theme='dark'] .app-shell {
   color-scheme: dark;
   color: #e4e9e1;
   background: #151a16;
+}
+
+html[data-theme='dark'] .auth-page {
+  color-scheme: dark;
+  background: #151a16;
+}
+
+html[data-theme='dark'] .auth-art {
+  background:
+    radial-gradient(ellipse at 87% 21%, rgba(91, 120, 70, 0.34), transparent 26%),
+    radial-gradient(ellipse at 5% 87%, rgba(67, 94, 57, 0.36), transparent 36%),
+    #1e261f;
+}
+
+html[data-theme='dark'] .auth-art h1,
+html[data-theme='dark'] .auth-card h2 {
+  color: #e4e9e1;
+}
+
+html[data-theme='dark'] .auth-art .eyebrow,
+html[data-theme='dark'] .auth-art-content > p,
+html[data-theme='dark'] .visual-label,
+html[data-theme='dark'] .auth-foot,
+html[data-theme='dark'] .auth-eyebrow,
+html[data-theme='dark'] .auth-description,
+html[data-theme='dark'] .auth-form label {
+  color: #a5afa3;
+}
+
+html[data-theme='dark'] .auth-form input {
+  border-color: #3a463b;
+  color: #e4e9e1;
+  background: #252f26;
+}
+
+html[data-theme='dark'] .auth-form input::placeholder {
+  color: #9ba69a;
+}
+
+html[data-theme='dark'] .auth-card > p:last-child {
+  color: #a5afa3;
+}
+
+html[data-theme='dark'] .pending-page {
+  background: #151a16;
+}
+
+html[data-theme='dark'] .pending-card {
+  border-color: #303a31;
+  background: #1e261f;
+  box-shadow: 0 14px 50px rgba(0, 0, 0, 0.2);
+}
+
+html[data-theme='dark'] .pending-card h1 {
+  color: #e4e9e1;
+}
+
+html[data-theme='dark'] .pending-card > p {
+  color: #a5afa3;
+}
+
+html[data-theme='dark'] .pending-icon {
+  color: #c4dfbd;
+  background: #2a3b2c;
+}
+
+html[data-theme='dark'] .pending-card .text-button {
+  color: #c4dfbd;
 }
 
 html[data-theme='dark'] .sidebar,

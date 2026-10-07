@@ -28,6 +28,11 @@ type BulkProduct = {
   quantity: number
   isBarcode: boolean
 }
+type ExpirationTarget = {
+  id: string
+  name: string
+  kind: 'product' | 'shopping'
+}
 
 async function fetchOffProduct(code: string): Promise<OffProduct> {
   const response = await fetch(
@@ -117,7 +122,7 @@ const gradeLabels: Record<string, string> = {
 const SharedCalendar = lazy(() => import('./SharedCalendar'))
 
 function App() {
-  const [darkMode, setDarkMode] = useState(() => localStorage.getItem('nutriscan-theme') === 'dark')
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem('nutriscan-theme') !== 'light')
   const [sessionUser, setSessionUser] = useState<{ id: string; email?: string } | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [products, setProducts] = useState<Product[]>([])
@@ -170,6 +175,10 @@ function App() {
   const [shoppingQuantityDrafts, setShoppingQuantityDrafts] = useState<Record<string, string>>({})
   const shoppingTouchTimer = useRef<number | null>(null)
   const [selectedProducts, setSelectedProducts] = useState<Record<string, number>>({})
+  const [expirationTarget, setExpirationTarget] = useState<ExpirationTarget | null>(null)
+  const [expirationDraft, setExpirationDraft] = useState('')
+  const [savingProductExpiration, setSavingProductExpiration] = useState(false)
+  const shoppingLastTap = useRef<{ itemId: string; time: number } | null>(null)
   const [manualName, setManualName] = useState('')
   const [manualAmount, setManualAmount] = useState('1')
   const [manualUnit, setManualUnit] = useState('unité')
@@ -763,24 +772,6 @@ function App() {
     setAddingShoppingItem(false)
   }
 
-  async function addProductToShopping(product: Product) {
-    if (!sessionUser) return
-    const { error } = await insertShoppingEntry({
-      name: product.product_name,
-      quantity: 1,
-      expirationDate: product.expiration_date,
-      imageUrl: product.image_url,
-      nutriscore: product.nutriscore,
-      zoneId: product.zone_id,
-    })
-    if (error) {
-      setNotice({ type: 'error', text: `Ajout à la liste de courses impossible : ${error.message}` })
-    } else {
-      setNotice({ type: 'success', text: `${product.product_name} a été ajouté à la liste de courses.` })
-      await loadShoppingItems()
-    }
-  }
-
   async function insertShoppingEntry(entry: {
     name: string
     quantity: number
@@ -1217,6 +1208,34 @@ function App() {
       if (error) setNotice({ type: 'error', text: `Mise à jour impossible : ${error.message}` })
     }
     await loadProducts()
+  }
+
+  async function saveProductExpiration() {
+    if (!expirationTarget || !sessionUser) return
+    setSavingProductExpiration(true)
+    const updateResult = expirationTarget.kind === 'product'
+      ? await supabase.from('products')
+        .update({ expiration_date: expirationDraft || null, updated_by: sessionUser.id })
+        .eq('id', expirationTarget.id)
+        .select('id')
+        .maybeSingle()
+      : await supabase.from('shopping_list_items')
+        .update({ expiration_date: expirationDraft || null })
+        .eq('id', expirationTarget.id)
+        .select('id')
+        .maybeSingle()
+    const { data, error } = updateResult
+    if (error) {
+      setNotice({ type: 'error', text: `Modification de la péremption impossible : ${error.message}` })
+    } else if (!data) {
+      setNotice({ type: 'error', text: 'Modification de la péremption impossible : le produit n’a pas été mis à jour.' })
+    } else {
+      setNotice({ type: 'success', text: `La date de péremption de « ${expirationTarget.name} » a été mise à jour.` })
+      setExpirationTarget(null)
+      if (expirationTarget.kind === 'product') await loadProducts()
+      else await loadShoppingItems()
+    }
+    setSavingProductExpiration(false)
   }
 
   async function saveManualProduct(event: FormEvent<HTMLFormElement>) {
@@ -1823,7 +1842,7 @@ function App() {
                   </div></td></tr>
                 </thead>
                 {groupProducts.length > 0 && visibleProducts.length > 0 && <tbody>
-                  {visibleProducts.map((product) => <ProductRow key={product.id} product={product} groupName={showGroupNames ? getZoneName(product.zone_id) : undefined} folderName={product.folder_id ? getFolderName(product.folder_id) : undefined} selected={selectedProducts[product.id] !== undefined} consumeAmount={selectedProducts[product.id] ?? 1} dragging={draggedProductId === product.id} onLongPress={() => { setDraggedProductId(product.id); setNotice({ type: 'info', text: `Déplacez ${product.product_name} vers un dossier.` }) }} onDragStart={(event) => { event.dataTransfer.setData('text/plain', product.id); event.dataTransfer.effectAllowed = 'move'; setDraggedProductId(product.id) }} onDragEnd={() => { setDraggedProductId(null); setDragOverFolderId(null) }} onSelect={(checked) => setSelectedProducts((current) => { const next = { ...current }; if (checked) next[product.id] = 1; else delete next[product.id]; return next })} onConsumeAmount={(amount) => setSelectedProducts((current) => ({ ...current, [product.id]: amount }))} onQuantity={(delta) => void changeQuantity(product, delta)} onAddToShopping={() => void addProductToShopping(product)} />)}
+                  {visibleProducts.map((product) => <ProductRow key={product.id} product={product} groupName={showGroupNames ? getZoneName(product.zone_id) : undefined} folderName={product.folder_id ? getFolderName(product.folder_id) : undefined} selected={selectedProducts[product.id] !== undefined} consumeAmount={selectedProducts[product.id] ?? 1} dragging={draggedProductId === product.id} onEditExpiration={() => { setExpirationTarget({ id: product.id, name: product.product_name, kind: 'product' }); setExpirationDraft(product.expiration_date ?? '') }} onLongPress={() => { setExpirationTarget({ id: product.id, name: product.product_name, kind: 'product' }); setExpirationDraft(product.expiration_date ?? '') }} onDragStart={(event) => { event.dataTransfer.setData('text/plain', product.id); event.dataTransfer.effectAllowed = 'move'; setDraggedProductId(product.id) }} onDragEnd={() => { setDraggedProductId(null); setDragOverFolderId(null) }} onSelect={(checked) => setSelectedProducts((current) => { const next = { ...current }; if (checked) next[product.id] = 1; else delete next[product.id]; return next })} onConsumeAmount={(amount) => setSelectedProducts((current) => ({ ...current, [product.id]: amount }))} onQuantity={(delta) => void changeQuantity(product, delta)} />)}
                 </tbody>}
                 </table></div>
                 {groupProducts.length === 0 ? <EmptyState onScan={openScanner} /> : visibleProducts.length === 0 ? <div className="empty-filter">{search.trim() ? `Aucun produit ne correspond à « ${search} » dans ce dossier.` : 'Aucun produit dans ce dossier.'}</div> : null}
@@ -1911,7 +1930,13 @@ function App() {
                 ) : (
                   <ul className="shopping-items">
                     {visibleShoppingItems.map((item) => (
-                      <li className={`shopping-item ${item.is_checked ? 'checked' : ''} ${draggedShoppingItemId === item.id ? 'shopping-item-dragging' : ''}`} key={item.id} draggable onDragStart={(event) => { event.dataTransfer.setData('text/plain', item.id); event.dataTransfer.effectAllowed = 'move'; setDraggedShoppingItemId(item.id) }} onDragEnd={() => { setDraggedShoppingItemId(null); setDragOverFolderId(null) }} onTouchStart={() => { if (shoppingTouchTimer.current !== null) window.clearTimeout(shoppingTouchTimer.current); shoppingTouchTimer.current = window.setTimeout(() => setDraggedShoppingItemId(item.id), 450) }} onTouchEnd={() => { if (shoppingTouchTimer.current !== null) window.clearTimeout(shoppingTouchTimer.current); shoppingTouchTimer.current = null }} onTouchCancel={() => { if (shoppingTouchTimer.current !== null) window.clearTimeout(shoppingTouchTimer.current); shoppingTouchTimer.current = null }}>
+                      <li className={`shopping-item ${item.is_checked ? 'checked' : ''} ${draggedShoppingItemId === item.id ? 'shopping-item-dragging' : ''}`} key={item.id} draggable onDragStart={(event) => { event.dataTransfer.setData('text/plain', item.id); event.dataTransfer.effectAllowed = 'move'; setDraggedShoppingItemId(item.id) }} onDragEnd={() => { setDraggedShoppingItemId(null); setDragOverFolderId(null) }}                       onTouchStart={() => {
+                        if (shoppingTouchTimer.current !== null) window.clearTimeout(shoppingTouchTimer.current)
+                        shoppingTouchTimer.current = window.setTimeout(() => {
+                          setExpirationTarget({ id: item.id, name: item.name, kind: 'shopping' })
+                          setExpirationDraft(item.expiration_date ?? '')
+                        }, 600)
+                      }} onTouchEnd={() => { if (shoppingTouchTimer.current !== null) window.clearTimeout(shoppingTouchTimer.current); shoppingTouchTimer.current = null }} onTouchCancel={() => { if (shoppingTouchTimer.current !== null) window.clearTimeout(shoppingTouchTimer.current); shoppingTouchTimer.current = null }}>
                         {item.image_url ? <img className="shopping-item-image" src={item.image_url} alt="" loading="lazy" /> : <div className="shopping-item-image shopping-item-placeholder">✳</div>}
                         <label>
                           <input
@@ -1920,7 +1945,24 @@ function App() {
                             onChange={() => void toggleShoppingItem(item)}
                             aria-label={`${item.is_checked ? 'Décocher' : 'Cocher'} ${item.name}`}
                           />
-                          <span>{item.name}{item.quantity !== 1 ? ` x${item.quantity}` : ''}{item.expiration_date ? <small className="shopping-item-expiration"> · Péremption : {formatFrenchDate(item.expiration_date)}</small> : null}</span>
+                          <span
+                            onDoubleClick={(event) => {
+                              event.preventDefault()
+                              setExpirationTarget({ id: item.id, name: item.name, kind: 'shopping' })
+                              setExpirationDraft(item.expiration_date ?? '')
+                            }}
+                            onTouchEnd={() => {
+                              const now = Date.now()
+                              const previousTap = shoppingLastTap.current
+                              if (previousTap?.itemId === item.id && now - previousTap.time < 350) {
+                                shoppingLastTap.current = null
+                                setExpirationTarget({ id: item.id, name: item.name, kind: 'shopping' })
+                                setExpirationDraft(item.expiration_date ?? '')
+                              } else {
+                                shoppingLastTap.current = { itemId: item.id, time: now }
+                              }
+                            }}
+                          >{item.name}{item.quantity !== 1 ? ` x${item.quantity}` : ''}{item.expiration_date ? <small className="shopping-item-expiration"> · Péremption : {formatFrenchDate(item.expiration_date)}</small> : null}</span>
                           {item.nutriscore && <span className={`score-badge grade-${item.nutriscore}`}><strong>{item.nutriscore.toUpperCase()}</strong></span>}
                         </label>
                         <div className="shopping-quantity-control" aria-label={`Modifier la quantité de ${item.name}`}>
@@ -2193,6 +2235,46 @@ function App() {
           </section>
         </div>
       )}
+      {expirationTarget && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !savingProductExpiration) setExpirationTarget(null)
+          }}
+        >
+          <section className="scanner-modal expiration-modal" role="dialog" aria-modal="true" aria-labelledby="product-expiration-title">
+            <button
+              className="modal-close"
+              type="button"
+              onClick={() => setExpirationTarget(null)}
+              aria-label="Fermer"
+              disabled={savingProductExpiration}
+            >×</button>
+            <span className="eyebrow">MODIFIER LE PRODUIT</span>
+            <h2 id="product-expiration-title">Date de péremption</h2>
+            <p className="modal-description">{expirationTarget.name}</p>
+            <form className="expiration-edit-form" onSubmit={(event) => { event.preventDefault(); void saveProductExpiration() }}>
+              <label>
+                Péremption
+                <input
+                  type="date"
+                  value={expirationDraft}
+                  onChange={(event) => setExpirationDraft(event.target.value)}
+                  disabled={savingProductExpiration}
+                />
+              </label>
+              <p>Laissez le champ vide pour retirer la date.</p>
+              <div className="calendar-event-form-actions">
+                <button className="button button-secondary" type="button" onClick={() => setExpirationTarget(null)} disabled={savingProductExpiration}>Annuler</button>
+                <button className="button button-primary" type="submit" disabled={savingProductExpiration}>
+                  {savingProductExpiration ? 'Enregistrement…' : 'Enregistrer'}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
       {folderModalOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !savingFolder) setFolderModalOpen(false) }}><section className="scanner-modal folder-modal" role="dialog" aria-modal="true" aria-labelledby="folder-modal-title"><button className="modal-close" type="button" onClick={() => setFolderModalOpen(false)} aria-label="Fermer" disabled={savingFolder}>×</button><span className="eyebrow">ORGANISATION</span><h2 id="folder-modal-title">Créer un dossier</h2><p className="modal-description">Choisissez un nom, une icône et une couleur pour votre dossier.</p><form className="folder-create-form" onSubmit={(event) => void createFolder(event)}><label>Nom du dossier<input value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} placeholder="Ex. Placard" maxLength={80} required autoFocus /></label><label>Liste<select value={newFolderKind} onChange={(event) => setNewFolderKind(event.target.value as 'inventory' | 'shopping')}><option value="inventory">Inventaire</option><option value="shopping">Liste de courses</option></select></label><label>Icône<input value={newFolderIcon} onChange={(event) => setNewFolderIcon(event.target.value)} maxLength={4} aria-label="Icône du dossier" /></label><label>Couleur<input type="color" value={newFolderColor} onChange={(event) => setNewFolderColor(event.target.value)} aria-label="Couleur du dossier" /></label><button className="button button-primary button-wide" type="submit" disabled={savingFolder || !newFolderName.trim() || !creationZoneId}>{savingFolder ? 'Création…' : 'Créer le dossier'}<span>↗</span></button></form></section></div>}
       {bulkOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !importingBulk) setBulkOpen(false) }}><section className="scanner-modal manual-modal bulk-modal" role="dialog" aria-modal="true" aria-labelledby="bulk-title"><button className="modal-close" onClick={() => setBulkOpen(false)} aria-label="Fermer" disabled={importingBulk}>×</button><span className="eyebrow">AJOUT EN LOT</span><h2 id="bulk-title">Ajouter plusieurs produits</h2><p className="modal-description">Collez un produit par ligne. Format : nom ou code-barres | date JJ/MM/AAAA | quantité. La date et la quantité sont facultatives.</p><form className="bulk-form" onSubmit={(event) => void importBulkProducts(event)}><DestinationSelector value={addDestination} onChange={setAddDestination} disabled={importingBulk} /><label htmlFor="bulk-products">Produits à ajouter<textarea id="bulk-products" value={bulkText} onChange={(event) => setBulkText(event.target.value)} placeholder={'LAIT | 22/07/2027\n3155250001298|22/07/2027|2\nLAIT\nLAIT||2'} rows={8} required disabled={importingBulk} /></label><p className="bulk-example">Les codes-barres sont recherchés sur Open Food Facts. Une ligne en échec reste dans le champ pour pouvoir être corrigée ou relancée.</p><button className="button button-primary button-wide" disabled={importingBulk || !bulkText.trim() || !creationZoneId}>{importingBulk ? 'Import en cours…' : 'Ajouter les produits'}<span>↗</span></button></form></section></div>}
       {manualOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setManualOpen(false) }}><section className="scanner-modal manual-modal" role="dialog" aria-modal="true" aria-labelledby="manual-title"><button className="modal-close" onClick={() => setManualOpen(false)} aria-label="Fermer">×</button><span className="eyebrow">AJOUTER À LA LISTE</span><h2 id="manual-title">Saisie manuelle</h2><p className="modal-description">Ajoutez un produit même s’il n’a pas de code-barres.</p><form className="manual-form" onSubmit={(event) => void saveManualProduct(event)}><DestinationSelector value={addDestination} onChange={setAddDestination} disabled={savingProduct} /><label>Nom du produit<input value={manualName} onChange={(event) => setManualName(event.target.value)} placeholder="Ex. farine de blé" required maxLength={120} /></label><label>Quantité<input type="number" min="0.001" step="0.001" value={manualAmount} onChange={(event) => setManualAmount(event.target.value)} required /></label><label>Unité<select value={manualUnit} onChange={(event) => setManualUnit(event.target.value)}><option>unité</option><option>g</option><option>kg</option><option>ml</option><option>l</option></select></label><label><span>Date de péremption</span><div className="expiration-controls"><input type="date" value={expirationDate} onChange={(event) => setExpirationDate(event.target.value)} /><button type="button" className="expiration-button" onClick={() => addExpirationOffset(1)} aria-label="Ajouter un jour">＋</button><button type="button" className="expiration-button" onClick={() => addExpirationOffset(30)} aria-label="Ajouter un mois">＋＋</button><button type="button" className="expiration-button" onClick={() => addExpirationOffset(365)} aria-label="Ajouter un an">＋＋＋</button></div></label><button className="button button-primary button-wide" disabled={savingProduct}>{savingProduct ? 'Ajout en cours…' : 'Ajouter à la liste'}<span>↗</span></button></form></section></div>}
@@ -2255,17 +2337,21 @@ function StatCard({ label, value, caption, icon, tone }: { label: string; value:
   return <article className="stat-card"><div className="stat-card-top"><span>{label}</span><span className={`stat-icon stat-${tone}`}>{icon}</span></div><div className="stat-value">{value}</div><div className="stat-caption">{caption}</div></article>
 }
 
-function ProductRow({ product, groupName, folderName, selected, consumeAmount, dragging, onLongPress, onDragStart, onDragEnd, onSelect, onConsumeAmount, onQuantity, onAddToShopping }: { product: Product; groupName?: string; folderName?: string; selected: boolean; consumeAmount: number; dragging: boolean; onLongPress: () => void; onDragStart: (event: DragEvent<HTMLTableRowElement>) => void; onDragEnd: () => void; onSelect: (checked: boolean) => void; onConsumeAmount: (amount: number) => void; onQuantity: (delta: number) => void; onAddToShopping: () => void }) {
+function ProductRow({ product, groupName, folderName, selected, consumeAmount, dragging, onLongPress, onEditExpiration, onDragStart, onDragEnd, onSelect, onConsumeAmount, onQuantity }: { product: Product; groupName?: string; folderName?: string; selected: boolean; consumeAmount: number; dragging: boolean; onLongPress: () => void; onEditExpiration: () => void; onDragStart: (event: DragEvent<HTMLTableRowElement>) => void; onDragEnd: () => void; onSelect: (checked: boolean) => void; onConsumeAmount: (amount: number) => void; onQuantity: (delta: number) => void }) {
   const touchTimer = useRef<number | null>(null)
+  const lastTouchTap = useRef(0)
   const startTouchDrag = () => {
-    touchTimer.current = window.setTimeout(onLongPress, 450)
+    touchTimer.current = window.setTimeout(() => {
+      touchTimer.current = null
+      onLongPress()
+    }, 600)
   }
   const clearTouchDrag = () => {
     if (touchTimer.current !== null) window.clearTimeout(touchTimer.current)
     touchTimer.current = null
   }
   const grade = product.nutriscore?.toLowerCase()
-  return <tr draggable className={`${product.expiration_date && isExpiringSoon(product.expiration_date) ? 'expiring-soon' : ''} ${dragging ? 'product-row-dragging' : ''}`} onDragStart={onDragStart} onDragEnd={onDragEnd} onTouchStart={startTouchDrag} onTouchEnd={clearTouchDrag} onTouchCancel={clearTouchDrag}><td><div className="consume-select"><input type="checkbox" checked={selected} onChange={(event) => onSelect(event.target.checked)} aria-label={`Sélectionner ${product.product_name} comme consommé`} />{selected && <input className="consume-amount" type="number" min="0.001" max={product.quantity} step="0.001" value={consumeAmount} onChange={(event) => onConsumeAmount(Number(event.target.value))} aria-label={`Quantité consommée de ${product.product_name}`} />}</div></td><td><div className="product-cell">{product.image_url ? <img className="product-image" src={product.image_url} alt="" loading="lazy" /> : <div className="product-placeholder">✳</div>}<div className="product-info"><strong>{product.product_name}</strong><span>{product.expiration_date ? `Péremption : ${formatFrenchDate(product.expiration_date)}` : 'Date de péremption non renseignée'}{product.brand ? ` · ${product.brand}` : ''}{product.quantity_label ? ` · ${product.quantity_label}` : ''}</span>{folderName && <span className="group-badge">{folderName}</span>}{groupName && <span className="group-badge">{groupName}</span>}</div></div></td><td><span className="category-label">{product.category || 'Autre'}</span></td><td>{grade ? <span className={`score-badge grade-${grade}`}><strong>{grade.toUpperCase()}</strong><span>{gradeLabels[grade] || 'Nutri-Score'}</span></span> : <span className="score-unavailable">Non noté</span>}{product.nova_group && <span className="nova-label">NOVA {product.nova_group}</span>}</td><td><strong className="quantity-number">{product.quantity}</strong> <span className="quantity-unit">{product.quantity_unit}</span></td><td><div className="quantity-control"><button onClick={() => onQuantity(-1)} aria-label={`Retirer une unité de ${product.product_name}`}>−</button><span>{product.quantity}</span><button onClick={() => onQuantity(1)} aria-label={`Ajouter une unité de ${product.product_name}`}>+</button><button onClick={onAddToShopping} className="shopping-transfer" aria-label={`Ajouter ${product.product_name} à la liste de courses`}>＋＋</button></div></td></tr>
+  return <tr draggable className={`${product.expiration_date && isExpiringSoon(product.expiration_date) ? 'expiring-soon' : ''} ${dragging ? 'product-row-dragging' : ''}`} onDragStart={onDragStart} onDragEnd={onDragEnd} onTouchStart={startTouchDrag} onTouchEnd={clearTouchDrag} onTouchCancel={clearTouchDrag}><td><div className="consume-select"><input type="checkbox" checked={selected} onChange={(event) => onSelect(event.target.checked)} aria-label={`Sélectionner ${product.product_name} comme consommé`} />{selected && <input className="consume-amount" type="number" min="0.001" max={product.quantity} step="0.001" value={consumeAmount} onChange={(event) => onConsumeAmount(Number(event.target.value))} aria-label={`Quantité consommée de ${product.product_name}`} />}</div></td><td><div className="product-cell">{product.image_url ? <img className="product-image" src={product.image_url} alt="" loading="lazy" /> : <div className="product-placeholder">✳</div>}<div className="product-info"><strong>{product.product_name}</strong><span onDoubleClick={(event) => { event.preventDefault(); onEditExpiration() }} onTouchEnd={() => { const now = Date.now(); if (now - lastTouchTap.current < 350) { lastTouchTap.current = 0; onEditExpiration() } else { lastTouchTap.current = now } }}>{product.expiration_date ? `Péremption : ${formatFrenchDate(product.expiration_date)}` : 'Date de péremption non renseignée'}{product.brand ? ` · ${product.brand}` : ''}{product.quantity_label ? ` · ${product.quantity_label}` : ''}</span>{folderName && <span className="group-badge">{folderName}</span>}{groupName && <span className="group-badge">{groupName}</span>}</div></div></td><td><span className="category-label">{product.category || 'Autre'}</span></td><td>{grade ? <span className={`score-badge grade-${grade}`}><strong>{grade.toUpperCase()}</strong><span>{gradeLabels[grade] || 'Nutri-Score'}</span></span> : <span className="score-unavailable">Non noté</span>}{product.nova_group && <span className="nova-label">NOVA {product.nova_group}</span>}</td><td><strong className="quantity-number">{product.quantity}</strong> <span className="quantity-unit">{product.quantity_unit}</span></td><td><div className="quantity-control"><button onClick={() => onQuantity(-1)} aria-label={`Retirer une unité de ${product.product_name}`}>−</button><span>{product.quantity}</span><button onClick={() => onQuantity(1)} aria-label={`Ajouter une unité de ${product.product_name}`}>+</button></div></td></tr>
 }
 
 function DestinationSelector({ value, onChange, disabled = false }: { value: 'inventory' | 'shopping'; onChange: (value: 'inventory' | 'shopping') => void; disabled?: boolean }) {

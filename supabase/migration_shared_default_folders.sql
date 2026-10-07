@@ -3,67 +3,38 @@ begin;
 alter table public.storage_folders
   alter column zone_id drop not null;
 
-with folder_candidates as (
-  select
-    id,
-    first_value(id) over (
-      partition by kind, name
-      order by (zone_id is null) desc, created_at, id
-    ) as canonical_id
+create temporary table shared_folder_duplicates on commit drop as
+select folder.id, canonical.canonical_id
+from public.storage_folders as folder
+join (
+  select distinct on (kind, name)
+    kind,
+    name,
+    id as canonical_id
   from public.storage_folders
   where (kind = 'inventory' and name in ('Frigo', 'Congélateur', 'Étagère'))
      or (kind = 'shopping' and name = 'Consommer')
-),
-duplicate_folders as (
-  select id, canonical_id
-  from folder_candidates
-  where id <> canonical_id
-)
+  order by kind, name, (zone_id is null) desc, created_at, id
+) as canonical
+  on canonical.kind = folder.kind
+  and canonical.name = folder.name
+where ((folder.kind = 'inventory' and folder.name in ('Frigo', 'Congélateur', 'Étagère'))
+    or (folder.kind = 'shopping' and folder.name = 'Consommer'))
+  and folder.id <> canonical.canonical_id;
+
 update public.products as product
-set folder_id = duplicate_folders.canonical_id
-from duplicate_folders
-where product.folder_id = duplicate_folders.id;
+set folder_id = duplicates.canonical_id
+from shared_folder_duplicates as duplicates
+where product.folder_id = duplicates.id;
 
-with folder_candidates as (
-  select
-    id,
-    first_value(id) over (
-      partition by kind, name
-      order by (zone_id is null) desc, created_at, id
-    ) as canonical_id
-  from public.storage_folders
-  where (kind = 'inventory' and name in ('Frigo', 'Congélateur', 'Étagère'))
-     or (kind = 'shopping' and name = 'Consommer')
-),
-duplicate_folders as (
-  select id, canonical_id
-  from folder_candidates
-  where id <> canonical_id
-)
 update public.shopping_list_items as item
-set folder_id = duplicate_folders.canonical_id
-from duplicate_folders
-where item.folder_id = duplicate_folders.id;
+set folder_id = duplicates.canonical_id
+from shared_folder_duplicates as duplicates
+where item.folder_id = duplicates.id;
 
-with folder_candidates as (
-  select
-    id,
-    first_value(id) over (
-      partition by kind, name
-      order by (zone_id is null) desc, created_at, id
-    ) as canonical_id
-  from public.storage_folders
-  where (kind = 'inventory' and name in ('Frigo', 'Congélateur', 'Étagère'))
-     or (kind = 'shopping' and name = 'Consommer')
-),
-duplicate_folders as (
-  select id
-  from folder_candidates
-  where id <> canonical_id
-)
 delete from public.storage_folders as folder
-using duplicate_folders
-where folder.id = duplicate_folders.id;
+using shared_folder_duplicates as duplicates
+where folder.id = duplicates.id;
 
 update public.storage_folders
 set zone_id = null
