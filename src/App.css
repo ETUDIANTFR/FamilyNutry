@@ -2137,6 +2137,12 @@ html[data-theme='dark'] .folder-create-form label {
   font-size: 10px;
 }
 
+.shopping-list-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .shopping-folder-inline {
   min-height: 40px;
   padding: 6px 14px;
@@ -2193,7 +2199,13 @@ html[data-theme='dark'] .folder-create-form label {
 }
 
 .shopping-item > label > span {
+  min-width: 0;
+  flex: 1;
   overflow-wrap: anywhere;
+}
+
+.shopping-item > label > .score-badge {
+  flex: 0 0 auto;
 }
 
 .shopping-item-expiration {
@@ -3158,6 +3170,70 @@ html[data-theme='dark'] .folder-create-form label {
 
   .shopping-add-form {
     padding: 12px;
+  }
+
+  .shopping-list-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .shopping-list-heading-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: space-between;
+  }
+
+  .shopping-item {
+    display: grid;
+    grid-template-columns: 38px minmax(0, 1fr) auto 28px 29px;
+    column-gap: 8px;
+    row-gap: 5px;
+    padding: 8px 0;
+  }
+
+  .shopping-item-image {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+
+  .shopping-item > label {
+    grid-column: 2 / 6;
+    grid-row: 1;
+    gap: 8px;
+  }
+
+  .shopping-item > label > span:first-of-type {
+    overflow-wrap: break-word;
+    word-break: normal;
+  }
+
+  .shopping-item > label > .score-badge {
+    white-space: nowrap;
+  }
+
+  .shopping-quantity-control {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .shopping-item > .group-badge {
+    grid-column: 3;
+    grid-row: 2;
+    min-width: 0;
+    max-width: 80px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .shopping-add-inventory {
+    grid-column: 4;
+    grid-row: 2;
+  }
+
+  .shopping-delete {
+    grid-column: 5;
+    grid-row: 2;
   }
 
   .shopping-add-form .button {

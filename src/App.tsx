@@ -203,11 +203,16 @@ function App() {
   const inventoryFolders = folders.filter((folder) => folder.kind === 'inventory')
   const shoppingFolders = folders.filter((folder) => folder.kind === 'shopping')
   const visibleInventoryFolders = activeZoneId
-    ? inventoryFolders.filter((folder) => folder.zone_id === activeZoneId)
+    ? inventoryFolders.filter((folder) => folder.zone_id === null || folder.zone_id === activeZoneId)
     : inventoryFolders
   const visibleShoppingFolders = activeZoneId
-    ? shoppingFolders.filter((folder) => folder.zone_id === activeZoneId)
+    ? shoppingFolders.filter((folder) => folder.zone_id === null || folder.zone_id === activeZoneId)
     : shoppingFolders
+  const consumedFolderIds = shoppingFolders
+    .filter((folder) => folder.name === 'Consommer')
+    .map((folder) => folder.id)
+  const isConsumedShoppingItem = (item: ShoppingListItem) =>
+    item.folder_id !== null && item.folder_id !== undefined && consumedFolderIds.includes(item.folder_id)
   const getFolderName = (folderId?: string | null) => folders.find((folder) => folder.id === folderId)?.name ?? 'Dossier'
   const loadProducts = useCallback(async () => {
     const { data, error } = await supabase.from('products').select('*').order('updated_at', { ascending: false })
@@ -283,14 +288,40 @@ function App() {
 
   const ensureDefaultFolders = useCallback(async () => {
     if (!sessionUser || zones.length === 0) return
-    const defaultFolders: Array<Pick<StorageFolder, 'name' | 'kind' | 'icon' | 'color' | 'zone_id' | 'created_by'>> = zones.flatMap((zone) => [
-      { name: 'Frigo', kind: 'inventory' as const, icon: '🧊', color: '#dfeeff', zone_id: zone.id, created_by: sessionUser.id },
-      { name: 'Congélateur', kind: 'inventory' as const, icon: '❄', color: '#eaf5ff', zone_id: zone.id, created_by: sessionUser.id },
-      { name: 'Étagère', kind: 'inventory' as const, icon: '▤', color: '#f2e4d4', zone_id: zone.id, created_by: sessionUser.id },
-      { name: 'Nature', kind: 'shopping' as const, icon: '🛒', color: '#e3f1dc', zone_id: zone.id, created_by: sessionUser.id },
-      { name: 'Consommer', kind: 'shopping' as const, icon: '✓', color: '#e9e2f5', zone_id: zone.id, created_by: sessionUser.id },
-    ])
-    const { error } = await supabase.from('storage_folders').upsert(defaultFolders, { onConflict: 'zone_id,kind,name' })
+    const { data: existingFolders, error: existingFoldersError } = await supabase
+      .from('storage_folders')
+      .select('id, name, kind, zone_id')
+    if (existingFoldersError) {
+      setNotice({ type: 'error', text: `Impossible de vérifier les dossiers existants : ${existingFoldersError.message}` })
+      return
+    }
+    const sharedDefaults: Array<Pick<StorageFolder, 'name' | 'kind' | 'icon' | 'color' | 'zone_id' | 'created_by'>> = [
+      { name: 'Frigo', kind: 'inventory', icon: '🧊', color: '#dfeeff', zone_id: null, created_by: sessionUser.id },
+      { name: 'Congélateur', kind: 'inventory', icon: '❄', color: '#eaf5ff', zone_id: null, created_by: sessionUser.id },
+      { name: 'Étagère', kind: 'inventory', icon: '▤', color: '#f2e4d4', zone_id: null, created_by: sessionUser.id },
+      { name: 'Consommer', kind: 'shopping', icon: '✓', color: '#e9e2f5', zone_id: null, created_by: sessionUser.id },
+    ]
+    const missingSharedDefaults = sharedDefaults.filter((defaultFolder) =>
+      !existingFolders.some((folder) =>
+        folder.zone_id === null && folder.kind === defaultFolder.kind && folder.name === defaultFolder.name,
+      ),
+    )
+    if (missingSharedDefaults.length > 0) {
+      const { error } = await supabase.from('storage_folders').insert(missingSharedDefaults)
+      if (error) {
+        setNotice({ type: 'error', text: `Création des dossiers partagés impossible : ${error.message}` })
+        return
+      }
+    }
+    const zoneDefaults: Array<Pick<StorageFolder, 'name' | 'kind' | 'icon' | 'color' | 'zone_id' | 'created_by'>> = zones.map((zone) => ({
+      name: 'Nature',
+      kind: 'shopping',
+      icon: '🛒',
+      color: '#e3f1dc',
+      zone_id: zone.id,
+      created_by: sessionUser.id,
+    }))
+    const { error } = await supabase.from('storage_folders').upsert(zoneDefaults, { onConflict: 'zone_id,kind,name' })
     if (error) {
       setNotice({ type: 'error', text: `Création des dossiers par défaut impossible : ${error.message}` })
       return
@@ -692,6 +723,10 @@ function App() {
       setNotice({ type: 'error', text: 'Le dossier « Consommer » est nécessaire pour conserver l’historique des produits consommés.' })
       return
     }
+    if (folder.zone_id === null) {
+      setNotice({ type: 'error', text: 'Ce dossier partagé est nécessaire et ne peut pas être supprimé.' })
+      return
+    }
     if (!window.confirm(`Supprimer le dossier « ${folder.name} » ? Les éléments associés resteront dans leurs listes, sans dossier.`)) return
     const { error } = await supabase.from('storage_folders').delete().eq('id', folder.id)
     if (error) {
@@ -776,7 +811,9 @@ function App() {
 
   async function addShoppingItemToInventory(item: ShoppingListItem) {
     if (!sessionUser) return
-    const folderId = folders.find((folder) => folder.zone_id === item.zone_id && folder.kind === 'inventory')?.id ?? null
+    const folderId = folders.find((folder) =>
+      folder.kind === 'inventory' && (folder.zone_id === null || folder.zone_id === item.zone_id),
+    )?.id ?? null
     const { error } = await supabase.from('products').insert({
       barcode: `SHOPPING-${crypto.randomUUID()}`,
       product_name: item.name,
@@ -805,7 +842,7 @@ function App() {
   const moveShoppingItemToFolder = useCallback(async (itemId: string, folderId: string) => {
     const item = shoppingItems.find((entry) => entry.id === itemId)
     const folder = folders.find((entry) => entry.id === folderId && entry.kind === 'shopping')
-    if (!item || !folder || item.zone_id !== folder.zone_id) {
+    if (!item || !folder || (folder.zone_id !== null && item.zone_id !== folder.zone_id)) {
       setNotice({ type: 'error', text: 'Cet article et ce dossier doivent appartenir au même groupe.' })
       return
     }
@@ -861,9 +898,11 @@ function App() {
   }
 
   async function clearCheckedShoppingItems() {
-    let query = supabase.from('shopping_list_items').delete().eq('is_checked', true)
-    if (activeZoneId) query = query.eq('zone_id', activeZoneId)
-    const { error } = await query
+    const checkedItems = shoppingItems.filter((item) =>
+      item.is_checked && !isConsumedShoppingItem(item) && (!activeZoneId || item.zone_id === activeZoneId),
+    )
+    if (checkedItems.length === 0) return
+    const { error } = await supabase.from('shopping_list_items').delete().in('id', checkedItems.map((item) => item.id))
     if (error) {
       setNotice({ type: 'error', text: `Impossible de supprimer les articles cochés : ${error.message}` })
       return
@@ -1086,7 +1125,7 @@ function App() {
   const moveProductToFolder = useCallback(async (productId: string, folderId: string) => {
     const product = products.find((item) => item.id === productId)
     const folder = folders.find((item) => item.id === folderId && item.kind === 'inventory')
-    if (!product || !folder || product.zone_id !== folder.zone_id) {
+    if (!product || !folder || (folder.zone_id !== null && product.zone_id !== folder.zone_id)) {
       setNotice({ type: 'error', text: 'Ce produit et ce dossier doivent appartenir au même groupe.' })
     } else if (product.folder_id === folder.id) {
       setNotice({ type: 'info', text: `${product.product_name} est déjà dans « ${folder.name} ».` })
@@ -1268,18 +1307,18 @@ function App() {
       }
       consumed += 1
       let consumedFolder = folders.find((folder) =>
-        folder.zone_id === product.zone_id && folder.kind === 'shopping' && folder.name === 'Consommer',
+        folder.zone_id === null && folder.kind === 'shopping' && folder.name === 'Consommer',
       )
       if (!consumedFolder) {
         const { data, error: folderError } = await supabase.from('storage_folders')
-          .upsert({
+          .insert({
             name: 'Consommer',
             kind: 'shopping',
             icon: '✓',
             color: '#e9e2f5',
-            zone_id: product.zone_id,
+            zone_id: null,
             created_by: sessionUser.id,
-          }, { onConflict: 'zone_id,kind,name' })
+          })
           .select('*')
           .single()
         if (folderError) {
@@ -1315,6 +1354,19 @@ function App() {
     try {
       await navigator.clipboard.writeText(text || 'La liste de courses est vide.')
       setNotice({ type: 'success', text: 'La liste complète a été copiée dans le presse-papiers.' })
+    } catch (error) {
+      setNotice({ type: 'error', text: `Copie impossible : ${error instanceof Error ? error.message : 'accès au presse-papiers refusé.'}` })
+    }
+  }
+
+  async function copyShoppingItems() {
+    const text = groupShoppingItems
+      .filter((item) => !isConsumedShoppingItem(item))
+      .map((item) => `- ${item.name}${item.quantity !== 1 ? ` x${item.quantity}` : ''}`)
+      .join('\n')
+    try {
+      await navigator.clipboard.writeText(text || 'La liste de courses est vide.')
+      setNotice({ type: 'success', text: 'La liste de courses a été copiée dans le presse-papiers.' })
     } catch (error) {
       setNotice({ type: 'error', text: `Copie impossible : ${error instanceof Error ? error.message : 'accès au presse-papiers refusé.'}` })
     }
@@ -1597,8 +1649,10 @@ function App() {
     activeZoneId ? items.filter((item) => item.zone_id === activeZoneId) : items
   const groupProducts = inSelectedZone(products)
   const groupShoppingItems = inSelectedZone(shoppingItems)
+  const nonConsumedShoppingItems = groupShoppingItems.filter((item) => !isConsumedShoppingItem(item))
   const visibleShoppingItems = groupShoppingItems.filter((item) => selectedShoppingFolder === null
-    || (selectedShoppingFolder === 'unfiled' ? !item.folder_id : item.folder_id === selectedShoppingFolder))
+    ? !isConsumedShoppingItem(item)
+    : selectedShoppingFolder === 'unfiled' ? !item.folder_id : item.folder_id === selectedShoppingFolder)
   const groupMeals = inSelectedZone(meals)
   const groupCalendarEvents = inSelectedZone(calendarEvents)
   const showGroupNames = activeZoneId === null && zones.length > 1
@@ -1684,7 +1738,7 @@ function App() {
         <div className="workspace-card"><div className="workspace-icon">⌂</div><div><strong>Ma liste commune</strong><span>{profile.role === 'admin' ? 'Administrateur' : 'Membre approuvé'}</span></div><span className="online-dot" /></div>
         <nav className="side-nav" aria-label="Navigation principale">
           <button className={`nav-item ${activeTab === 'products' ? 'active' : ''}`} onClick={() => setActiveTab('products')}><span className="nav-icon">▦</span>Ma liste<span className="nav-count">{groupProducts.length}</span></button>
-          <button className={`nav-item ${activeTab === 'shopping' ? 'active' : ''}`} onClick={() => setActiveTab('shopping')}><span className="nav-icon">✓</span>Courses<span className="nav-count">{groupShoppingItems.filter((item) => !item.is_checked).length}</span></button>
+          <button className={`nav-item ${activeTab === 'shopping' ? 'active' : ''}`} onClick={() => setActiveTab('shopping')}><span className="nav-icon">✓</span>Courses<span className="nav-count">{nonConsumedShoppingItems.filter((item) => !item.is_checked).length}</span></button>
           <button className={`nav-item ${activeTab === 'meals' ? 'active' : ''}`} onClick={() => setActiveTab('meals')}><span className="nav-icon">◷</span>Repas<span className="nav-count">{groupMeals.length}</span></button>
           <button className={`nav-item ${activeTab === 'calendar' ? 'active' : ''}`} onClick={() => setActiveTab('calendar')}><span className="nav-icon">▦</span>Calendrier<span className="nav-count">{groupCalendarEvents.length}</span></button>
           {profile.role === 'admin' && <button className={`nav-item ${activeTab === 'members' ? 'active' : ''}`} onClick={() => setActiveTab('members')}><span className="nav-icon">♙</span>Membres{pendingUsers.length > 0 && <span className="nav-count nav-alert">{pendingUsers.length}</span>}</button>}
@@ -1759,10 +1813,10 @@ function App() {
                           if (productId) void moveProductToFolder(productId, folder.id)
                         }}
                       >
-                        <button type="button" className={`folder-mini ${selectedProductFolder === folder.id ? 'folder-mini-active' : ''}`} onClick={() => setSelectedProductFolder(folder.id)} title={`${folder.name}${showGroupNames ? ` · ${getZoneName(folder.zone_id)}` : ''} (${groupProducts.filter((product) => product.folder_id === folder.id).length})`} aria-label={`Afficher le dossier ${folder.name}${showGroupNames ? `, ${getZoneName(folder.zone_id)}` : ''}`}>
+                        <button type="button" className={`folder-mini ${selectedProductFolder === folder.id ? 'folder-mini-active' : ''}`} onClick={() => setSelectedProductFolder(folder.id)} title={`${folder.name}${showGroupNames && folder.zone_id ? ` · ${getZoneName(folder.zone_id)}` : ''} (${groupProducts.filter((product) => product.folder_id === folder.id).length})`} aria-label={`Afficher le dossier ${folder.name}${showGroupNames && folder.zone_id ? `, ${getZoneName(folder.zone_id)}` : ''}`}>
                           <span className="folder-mini-icon" aria-hidden="true">{folder.icon}</span><span>{folder.name}</span>
                         </button>
-                        <button type="button" className="folder-mini-delete" onClick={() => void deleteFolder(folder)} aria-label={`Supprimer le dossier ${folder.name}`} title={`Supprimer ${folder.name}`}>×</button>
+                          {folder.zone_id !== null && <button type="button" className="folder-mini-delete" onClick={() => void deleteFolder(folder)} aria-label={`Supprimer le dossier ${folder.name}`} title={`Supprimer ${folder.name}`}>×</button>}
                       </div>
                     ))}
                     <button type="button" className="folder-mini folder-mini-add" onClick={() => { setNewFolderKind('inventory'); setFolderModalOpen(true) }} aria-label="Créer un dossier" title="Créer un dossier"><span aria-hidden="true">＋</span></button>
@@ -1802,17 +1856,22 @@ function App() {
               <div className="shopping-list-panel">
                 <div className="shopping-list-heading">
                   <div>
-                    <h2>Liste de courses <span className="subtle-count">{groupShoppingItems.filter((item) => !item.is_checked).length}</span></h2>
+                    <h2>Liste de courses <span className="subtle-count">{visibleShoppingItems.filter((item) => !item.is_checked).length}</span></h2>
                     <p>La liste est partagée avec tous les membres.</p>
                   </div>
-                  {groupShoppingItems.some((item) => item.is_checked) && (
-                    <button className="text-button" type="button" onClick={() => void clearCheckedShoppingItems()}>
-                      Effacer les articles cochés
+                  <div className="shopping-list-heading-actions">
+                    <button className="button button-secondary" type="button" onClick={() => void copyShoppingItems()}>
+                      Copier la liste
                     </button>
-                  )}
+                    {nonConsumedShoppingItems.some((item) => item.is_checked) && (
+                      <button className="text-button" type="button" onClick={() => void clearCheckedShoppingItems()}>
+                        Effacer les articles cochés
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="folder-inline-list shopping-folder-inline" aria-label="Filtrer les articles par dossier">
-                  <button type="button" className={`folder-mini ${selectedShoppingFolder === null ? 'folder-mini-active' : ''}`} onClick={() => setSelectedShoppingFolder(null)} title={`Tous les articles (${groupShoppingItems.length})`} aria-label={`Tous les articles, ${groupShoppingItems.length}`}>
+                  <button type="button" className={`folder-mini ${selectedShoppingFolder === null ? 'folder-mini-active' : ''}`} onClick={() => setSelectedShoppingFolder(null)} title={`Tous les articles (${nonConsumedShoppingItems.length})`} aria-label={`Tous les articles, ${nonConsumedShoppingItems.length}`}>
                     <span aria-hidden="true">▦</span><span>Tous</span>
                   </button>
                   <button type="button" className={`folder-mini ${selectedShoppingFolder === 'unfiled' ? 'folder-mini-active' : ''}`} onClick={() => setSelectedShoppingFolder('unfiled')} title={`Sans dossier (${groupShoppingItems.filter((item) => !item.folder_id).length})`} aria-label={`Sans dossier, ${groupShoppingItems.filter((item) => !item.folder_id).length}`}>
@@ -1833,15 +1892,15 @@ function App() {
                         if (itemId) void moveShoppingItemToFolder(itemId, folder.id)
                       }}
                     >
-                      <button type="button" className={`folder-mini ${selectedShoppingFolder === folder.id ? 'folder-mini-active' : ''}`} onClick={() => setSelectedShoppingFolder(folder.id)} title={`${folder.name}${showGroupNames ? ` · ${getZoneName(folder.zone_id)}` : ''} (${groupShoppingItems.filter((item) => item.folder_id === folder.id).length})`} aria-label={`Afficher le dossier ${folder.name}${showGroupNames ? `, ${getZoneName(folder.zone_id)}` : ''}`}>
-                        <span className="folder-mini-icon" aria-hidden="true">{folder.icon}</span><span>{folder.name}{showGroupNames ? ` · ${getZoneName(folder.zone_id)}` : ''}</span>
+                      <button type="button" className={`folder-mini ${selectedShoppingFolder === folder.id ? 'folder-mini-active' : ''}`} onClick={() => setSelectedShoppingFolder(folder.id)} title={`${folder.name}${showGroupNames && folder.zone_id ? ` · ${getZoneName(folder.zone_id)}` : ''} (${groupShoppingItems.filter((item) => item.folder_id === folder.id).length})`} aria-label={`Afficher le dossier ${folder.name}${showGroupNames && folder.zone_id ? `, ${getZoneName(folder.zone_id)}` : ''}`}>
+                        <span className="folder-mini-icon" aria-hidden="true">{folder.icon}</span><span>{folder.name}{showGroupNames && folder.zone_id ? ` · ${getZoneName(folder.zone_id)}` : ''}</span>
                       </button>
-                      {folder.name !== 'Consommer' && <button type="button" className="folder-mini-delete" onClick={() => void deleteFolder(folder)} aria-label={`Supprimer le dossier ${folder.name}`} title={`Supprimer ${folder.name}`}>×</button>}
+                      {folder.zone_id !== null && folder.name !== 'Consommer' && <button type="button" className="folder-mini-delete" onClick={() => void deleteFolder(folder)} aria-label={`Supprimer le dossier ${folder.name}`} title={`Supprimer ${folder.name}`}>×</button>}
                     </div>
                   ))}
                   <button type="button" className="folder-mini folder-mini-add" onClick={() => { setNewFolderKind('shopping'); setFolderModalOpen(true) }} aria-label="Créer un dossier de courses" title="Créer un dossier">＋</button>
                 </div>
-                {groupShoppingItems.length === 0 ? (
+                {nonConsumedShoppingItems.length === 0 && selectedShoppingFolder === null ? (
                   <div className="no-pending">
                     <span>✓</span>
                     <strong>La liste est vide.</strong>

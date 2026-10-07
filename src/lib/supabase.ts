@@ -74,7 +74,7 @@ export type StorageFolder = {
   kind: 'inventory' | 'shopping'
   icon: string
   color: string
-  zone_id: string
+  zone_id: string | null
   created_by: string | null
   created_at: string
 }
