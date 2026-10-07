@@ -3,43 +3,61 @@ begin;
 alter table public.storage_folders
   alter column zone_id drop not null;
 
-create temporary table shared_folder_duplicates on commit drop as
-select folder.id, canonical.canonical_id
-from public.storage_folders as folder
-join (
-  select distinct on (kind, name)
-    kind,
-    name,
-    id as canonical_id
-  from public.storage_folders
-  where (kind = 'inventory' and name in ('Frigo', 'Congélateur', 'Étagère'))
-     or (kind = 'shopping' and name = 'Consommer')
-  order by kind, name, (zone_id is null) desc, created_at, id
-) as canonical
-  on canonical.kind = folder.kind
-  and canonical.name = folder.name
-where ((folder.kind = 'inventory' and folder.name in ('Frigo', 'Congélateur', 'Étagère'))
-    or (folder.kind = 'shopping' and folder.name = 'Consommer'))
-  and folder.id <> canonical.canonical_id;
+do $$
+declare
+  shared_folder record;
+  canonical_id uuid;
+begin
+  for shared_folder in
+    select kind, name
+    from public.storage_folders
+    where (kind = 'inventory' and name in ('Frigo', 'Congélateur', 'Étagère'))
+       or (kind = 'shopping' and name = 'Consommer')
+    group by kind, name
+  loop
+    select id
+    into canonical_id
+    from public.storage_folders
+    where kind = shared_folder.kind
+      and name = shared_folder.name
+    order by (zone_id is null) desc, created_at, id
+    limit 1;
 
-update public.products as product
-set folder_id = duplicates.canonical_id
-from shared_folder_duplicates as duplicates
-where product.folder_id = duplicates.id;
+    update public.products
+    set folder_id = canonical_id
+    where folder_id in (
+      select id
+      from public.storage_folders
+      where kind = shared_folder.kind
+        and name = shared_folder.name
+        and id <> canonical_id
+    );
 
-update public.shopping_list_items as item
-set folder_id = duplicates.canonical_id
-from shared_folder_duplicates as duplicates
-where item.folder_id = duplicates.id;
+    update public.shopping_list_items
+    set folder_id = canonical_id
+    where folder_id in (
+      select id
+      from public.storage_folders
+      where kind = shared_folder.kind
+        and name = shared_folder.name
+        and id <> canonical_id
+    );
 
-delete from public.storage_folders as folder
-using shared_folder_duplicates as duplicates
-where folder.id = duplicates.id;
+    delete from public.storage_folders
+    where kind = shared_folder.kind
+      and name = shared_folder.name
+      and id <> canonical_id;
 
-update public.storage_folders
-set zone_id = null
-where (kind = 'inventory' and name in ('Frigo', 'Congélateur', 'Étagère'))
-   or (kind = 'shopping' and name = 'Consommer');
+    update public.storage_folders
+    set zone_id = null
+    where id = canonical_id;
+  end loop;
+end;
+$$;
+
+create unique index if not exists storage_folders_shared_kind_name_idx
+  on public.storage_folders (kind, name)
+  where zone_id is null;
 
 insert into public.storage_folders (name, kind, icon, color, zone_id)
 values
@@ -47,11 +65,7 @@ values
   ('Congélateur', 'inventory', '❄', '#eaf5ff', null),
   ('Étagère', 'inventory', '▤', '#f2e4d4', null),
   ('Consommer', 'shopping', '✓', '#e9e2f5', null)
-on conflict do nothing;
-
-create unique index if not exists storage_folders_shared_kind_name_idx
-  on public.storage_folders (kind, name)
-  where zone_id is null;
+on conflict (kind, name) where zone_id is null do nothing;
 
 alter table public.storage_folders
   drop constraint if exists storage_folders_shared_names_check;

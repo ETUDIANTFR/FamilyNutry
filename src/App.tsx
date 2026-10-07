@@ -318,7 +318,29 @@ function App() {
     if (missingSharedDefaults.length > 0) {
       const { error } = await supabase.from('storage_folders').insert(missingSharedDefaults)
       if (error) {
-        setNotice({ type: 'error', text: `Création des dossiers partagés impossible : ${error.message}` })
+        if (error.code !== '23502' || !error.message.includes('"zone_id"')) {
+          setNotice({ type: 'error', text: `Création des dossiers partagés impossible : ${error.message}` })
+          return
+        }
+
+        const legacyDefaults: Array<Pick<StorageFolder, 'name' | 'kind' | 'icon' | 'color' | 'zone_id' | 'created_by'>> = zones.flatMap((zone) => [
+          { name: 'Frigo', kind: 'inventory' as const, icon: '🧊', color: '#dfeeff', zone_id: zone.id, created_by: sessionUser.id },
+          { name: 'Congélateur', kind: 'inventory' as const, icon: '❄', color: '#eaf5ff', zone_id: zone.id, created_by: sessionUser.id },
+          { name: 'Étagère', kind: 'inventory' as const, icon: '▤', color: '#f2e4d4', zone_id: zone.id, created_by: sessionUser.id },
+          { name: 'Nature', kind: 'shopping' as const, icon: '🛒', color: '#e3f1dc', zone_id: zone.id, created_by: sessionUser.id },
+          { name: 'Consommer', kind: 'shopping' as const, icon: '✓', color: '#e9e2f5', zone_id: zone.id, created_by: sessionUser.id },
+        ])
+        const { error: legacyError } = await supabase.from('storage_folders')
+          .upsert(legacyDefaults, { onConflict: 'zone_id,kind,name' })
+        if (legacyError) {
+          setNotice({ type: 'error', text: `Création des dossiers par défaut impossible : ${legacyError.message}` })
+          return
+        }
+        setNotice({
+          type: 'info',
+          text: 'La base Supabase n’a pas encore été migrée pour les dossiers communs. Exécutez migration_shared_default_folders.sql dans Supabase, puis publiez aussi la dernière version de l’application sur GitHub ; les dossiers restent séparés par zone en attendant.',
+        })
+        await loadFolders()
         return
       }
     }
