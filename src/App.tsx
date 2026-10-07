@@ -324,10 +324,11 @@ function App() {
         }
 
         const legacyDefaults: Array<Pick<StorageFolder, 'name' | 'kind' | 'icon' | 'color' | 'zone_id' | 'created_by'>> = zones.flatMap((zone) => [
-          { name: 'Frigo', kind: 'inventory' as const, icon: '🧊', color: '#1f007e', zone_id: zone.id, created_by: sessionUser.id },
-          { name: 'Congélateur', kind: 'inventory' as const, icon: '❄', color: '#00d9ff', zone_id: zone.id, created_by: sessionUser.id },
-          { name: 'Étagère', kind: 'inventory' as const, icon: '▤', color: '#5e3200', zone_id: zone.id, created_by: sessionUser.id },
-          { name: 'Consommer', kind: 'shopping' as const, icon: '✓', color: '#000000', zone_id: zone.id, created_by: sessionUser.id },
+          { name: 'Frigo', kind: 'inventory' as const, icon: '🧊', color: '#dfeeff', zone_id: zone.id, created_by: sessionUser.id },
+          { name: 'Congélateur', kind: 'inventory' as const, icon: '❄', color: '#eaf9ff', zone_id: zone.id, created_by: sessionUser.id },
+          { name: 'Étagère', kind: 'inventory' as const, icon: '▤', color: '#f2e4d4', zone_id: zone.id, created_by: sessionUser.id },
+          { name: 'Nature', kind: 'shopping' as const, icon: '🛒', color: '#e3f1dc', zone_id: zone.id, created_by: sessionUser.id },
+          { name: 'Consommer', kind: 'shopping' as const, icon: '✓', color: '#e9e2f5', zone_id: zone.id, created_by: sessionUser.id },
         ])
         const { error: legacyError } = await supabase.from('storage_folders')
           .upsert(legacyDefaults, { onConflict: 'zone_id,kind,name' })
@@ -343,7 +344,14 @@ function App() {
         return
       }
     }
-
+    const zoneDefaults: Array<Pick<StorageFolder, 'name' | 'kind' | 'icon' | 'color' | 'zone_id' | 'created_by'>> = zones.map((zone) => ({
+      name: 'Nature',
+      kind: 'shopping',
+      icon: '🛒',
+      color: '#e3f1dc',
+      zone_id: zone.id,
+      created_by: sessionUser.id,
+    }))
     const { error } = await supabase.from('storage_folders').upsert(zoneDefaults, { onConflict: 'zone_id,kind,name' })
     if (error) {
       setNotice({ type: 'error', text: `Création des dossiers par défaut impossible : ${error.message}` })
