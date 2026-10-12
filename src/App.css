@@ -349,6 +349,12 @@
   font-weight: 700;
 }
 
+.auth-forgot {
+  justify-self: end;
+  margin-top: -8px;
+  font-size: 12px;
+}
+
 .auth-privacy {
   margin-top: 38px;
   color: #a0a69c;

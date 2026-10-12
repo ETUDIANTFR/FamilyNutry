@@ -149,9 +149,11 @@ function App() {
   const [memberUsers, setMemberUsers] = useState<Profile[]>([])
   const [revokingUserId, setRevokingUserId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login')
+  const [authMode, setAuthMode] = useState<'login' | 'signup' | 'reset'>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [passwordRecovery, setPasswordRecovery] = useState(false)
   const [fullName, setFullName] = useState('')
   const [notice, setNotice] = useState<Notice | null>(null)
   const [authBusy, setAuthBusy] = useState(false)
@@ -469,8 +471,12 @@ function App() {
       if (active) setLoading(false)
     }
     void initialise()
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       const user = session?.user
+      if (event === 'PASSWORD_RECOVERY') {
+        setPasswordRecovery(true)
+        setNotice(null)
+      }
       setSessionUser(user ? { id: user.id, email: user.email } : null)
       if (!user) {
         setProfile(null)
@@ -610,7 +616,13 @@ function App() {
     setAuthBusy(true)
     setNotice(null)
     try {
-      if (authMode === 'signup') {
+      if (authMode === 'reset') {
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: window.location.href.split('#')[0],
+        })
+        if (error) throw error
+        setNotice({ type: 'success', text: 'Si un compte existe pour cette adresse, un lien de réinitialisation vient de lui être envoyé.' })
+      } else if (authMode === 'signup') {
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
@@ -630,6 +642,23 @@ function App() {
         setSessionUser({ id: data.user.id, email: data.user.email })
         await loadProfile(data.user.id)
       }
+    } catch (error) {
+      setNotice({ type: 'error', text: authMessage(error) })
+    } finally {
+      setAuthBusy(false)
+    }
+  }
+
+  async function saveRecoveredPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setAuthBusy(true)
+    setNotice(null)
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword })
+      if (error) throw error
+      setPasswordRecovery(false)
+      setNewPassword('')
+      setNotice({ type: 'success', text: 'Votre mot de passe a été modifié.' })
     } catch (error) {
       setNotice({ type: 'error', text: authMessage(error) })
     } finally {
@@ -1577,11 +1606,11 @@ function App() {
     const lines = [
       'BEGIN:VCALENDAR',
       'VERSION:2.0',
-      'PRODID:-//NutriScan//Calendrier//FR',
+      'PRODID:-//FamilyNutry//Calendrier//FR',
       'CALSCALE:GREGORIAN',
       ...groupCalendarEvents.flatMap((event) => [
         'BEGIN:VEVENT',
-        `UID:${event.id}@nutriscan`,
+        `UID:${event.id}@familynutry`,
         `DTSTAMP:${icsDateTime(event.created_at)}`,
         event.all_day
           ? `DTSTART;VALUE=DATE:${event.starts_at.slice(0, 10).replace(/-/g, '')}`
@@ -1600,7 +1629,7 @@ function App() {
     const url = URL.createObjectURL(new Blob([content], { type: 'text/calendar;charset=utf-8' }))
     const link = document.createElement('a')
     link.href = url
-    link.download = 'nutriscan-calendrier.ics'
+    link.download = 'familynutry-calendrier.ics'
     link.click()
     window.setTimeout(() => URL.revokeObjectURL(url), 1000)
     setNotice({ type: 'success', text: `${groupCalendarEvents.length} événement(s) exporté(s) au format iCalendar.` })
@@ -1713,7 +1742,25 @@ function App() {
   }
 
   if (loading) {
-    return <main className="loading-screen"><span className="brand-mark">n</span><p>Préparation de votre espace partagé…</p></main>
+    return <main className="loading-screen"><span className="brand-mark">f</span><p>Préparation de votre espace partagé…</p></main>
+  }
+
+  if (passwordRecovery) {
+    return (
+      <main className="pending-page">
+        <div className="pending-card">
+          <Brand />
+          <span className="eyebrow">SÉCURITÉ DU COMPTE</span>
+          <h1>Nouveau mot de passe</h1>
+          <p>Choisissez un nouveau mot de passe pour votre compte FamilyNutry.</p>
+          <NoticeView notice={notice} />
+          <form className="auth-form" onSubmit={(event) => void saveRecoveredPassword(event)}>
+            <label>Nouveau mot de passe<input type="password" autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="8 caractères minimum" minLength={8} required /></label>
+            <button className="button button-primary button-wide" disabled={authBusy}>{authBusy ? 'Enregistrement…' : 'Modifier le mot de passe'}</button>
+          </form>
+        </div>
+      </main>
+    )
   }
 
   if (!sessionUser) {
@@ -1734,17 +1781,18 @@ function App() {
         <section className="auth-panel">
           <div className="auth-card">
             <Brand />
-            <span className="eyebrow auth-eyebrow">{authMode === 'login' ? 'HEUREUX DE VOUS REVOIR' : 'REJOIGNEZ VOTRE GROUPE'}</span>
-            <h2>{authMode === 'login' ? 'Connexion' : 'Créer un compte'}</h2>
-            <p className="auth-description">{authMode === 'login' ? 'Connectez-vous pour retrouver votre liste commune.' : 'Un administrateur approuvera votre demande. 10 comptes maximum.'}</p>
+            <span className="eyebrow auth-eyebrow">{authMode === 'login' ? 'HEUREUX DE VOUS REVOIR' : authMode === 'signup' ? 'REJOIGNEZ VOTRE GROUPE' : 'RÉCUPÉRATION DU COMPTE'}</span>
+            <h2>{authMode === 'login' ? 'Connexion' : authMode === 'signup' ? 'Créer un compte' : 'Mot de passe oublié'}</h2>
+            <p className="auth-description">{authMode === 'login' ? 'Connectez-vous pour retrouver votre liste commune.' : authMode === 'signup' ? 'Un administrateur approuvera votre demande. 10 comptes maximum.' : 'Saisissez votre adresse email pour recevoir un lien de réinitialisation.'}</p>
             <NoticeView notice={notice} />
             <form className="auth-form" onSubmit={handleAuth}>
               {authMode === 'signup' && <label>Votre nom<input autoComplete="name" value={fullName} onChange={(event) => setFullName(event.target.value)} placeholder="Ex. Camille Martin" required maxLength={80} /></label>}
               <label>Adresse email<input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="vous@exemple.fr" required /></label>
-              <label>Mot de passe<input type="password" autoComplete={authMode === 'login' ? 'current-password' : 'new-password'} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="8 caractères minimum" minLength={8} required /></label>
-              <button className="button button-primary button-wide" disabled={authBusy}>{authBusy ? 'Veuillez patienter…' : authMode === 'login' ? 'Se connecter' : 'Demander un accès'}<span>↗</span></button>
+              {authMode !== 'reset' && <label>Mot de passe<input type="password" autoComplete={authMode === 'login' ? 'current-password' : 'new-password'} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="8 caractères minimum" minLength={8} required /></label>}
+              {authMode === 'login' && <button className="text-button auth-forgot" type="button" onClick={() => { setAuthMode('reset'); setNotice(null) }}>Mot de passe oublié ?</button>}
+              <button className="button button-primary button-wide" disabled={authBusy}>{authBusy ? 'Veuillez patienter…' : authMode === 'login' ? 'Se connecter' : authMode === 'signup' ? 'Demander un accès' : 'Envoyer le lien'}<span>↗</span></button>
             </form>
-            <p className="auth-switch">{authMode === 'login' ? 'Nouveau dans le groupe ?' : 'Vous avez déjà un compte ?'} <button type="button" onClick={() => { setAuthMode(authMode === 'login' ? 'signup' : 'login'); setNotice(null) }}>{authMode === 'login' ? 'Créer un compte' : 'Se connecter'}</button></p>
+            <p className="auth-switch">{authMode === 'login' ? 'Nouveau dans le groupe ?' : authMode === 'signup' ? 'Vous avez déjà un compte ?' : 'Vous vous souvenez de votre mot de passe ?'} <button type="button" onClick={() => { setAuthMode(authMode === 'login' ? 'signup' : 'login'); setNotice(null) }}>{authMode === 'login' ? 'Créer un compte' : 'Se connecter'}</button></p>
             <p className="auth-privacy">Votre liste est privée : seuls les membres approuvés y ont accès.</p>
           </div>
         </section>
@@ -2209,7 +2257,7 @@ function App() {
             </section>
           )}
         </div>
-        <footer className="footer"><span>NutriScan <span className="footer-dot">·</span> Votre espace, à partager.</span><span>Une alimentation plus éclairée, ensemble.</span></footer>
+        <footer className="footer"><span>FamilyNutry <span className="footer-dot">·</span> Votre espace, à partager.</span><span>Une alimentation plus éclairée, ensemble.</span></footer>
       </main>
 
       {eventModalOpen && (
@@ -2347,7 +2395,7 @@ function authMessage(error: unknown) {
 }
 
 function Brand() {
-  return <div className="brand"><span className="brand-mark">n</span><span>nutri<span>scan</span></span></div>
+  return <div className="brand"><span className="brand-mark">f</span><span>FamilyNutry</span></div>
 }
 
 function NoticeView({ notice }: { notice: Notice | null }) {
