@@ -25,7 +25,8 @@
     "html5-qrcode": "^2.3.8",
     "ical.js": "^2.2.1",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "tesseract.js": "^6.0.1"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.3",

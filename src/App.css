@@ -1915,6 +1915,98 @@ html[data-theme='dark'] .folder-create-form label {
   line-height: 1.5;
 }
 
+.receipt-modal {
+  width: min(620px, 100%);
+}
+
+.receipt-photo-button {
+  width: 100%;
+  cursor: pointer;
+}
+
+.receipt-file-input {
+  display: none;
+}
+
+.receipt-progress,
+.receipt-error {
+  margin: 12px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.receipt-progress {
+  color: #65715f;
+}
+
+.receipt-error {
+  color: #a63b35;
+}
+
+.receipt-products-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 18px 0 8px;
+  color: #596255;
+  font-size: 11px;
+}
+
+.receipt-products-heading span {
+  color: #8c9388;
+  font-size: 10px;
+}
+
+.receipt-products {
+  display: grid;
+  max-height: 300px;
+  gap: 8px;
+  overflow-y: auto;
+  padding: 1px;
+}
+
+.receipt-product-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 86px 28px;
+  align-items: end;
+  gap: 8px;
+}
+
+.receipt-product-row label {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  color: #596255;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.receipt-product-row input {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 0 8px;
+  border: 1px solid #e4e8df;
+  border-radius: 5px;
+  color: #414940;
+  background: #fff;
+  font: inherit;
+  font-size: 11px;
+}
+
+.receipt-remove-button {
+  height: 36px;
+  border: 1px solid #eadcda;
+  border-radius: 5px;
+  color: #a63b35;
+  background: #fff8f7;
+  font-size: 17px;
+}
+
+.receipt-save-button {
+  margin-top: 12px;
+}
+
 .meals-section .page-heading {
   margin-bottom: 20px;
 }
@@ -3515,6 +3607,230 @@ html[data-theme='dark'] .folder-create-form label {
   }
 }
 
+html[data-theme='dark'] {
+  color: #f2f3f5;
+  background: #2b2d31;
+  color-scheme: dark;
+}
+
+html[data-theme='dark'] body,
+html[data-theme='dark'] .app-shell,
+html[data-theme='dark'] .auth-page,
+html[data-theme='dark'] .pending-page,
+html[data-theme='dark'] .setup-page,
+html[data-theme='dark'] .loading-screen {
+  color: #f2f3f5;
+  background: #2b2d31;
+}
+
+html[data-theme='dark'] .sidebar,
+html[data-theme='dark'] .topbar {
+  border-color: #1e1f22;
+  background: #1e1f22;
+}
+
+html[data-theme='dark'] .member-panel,
+html[data-theme='dark'] .list-section,
+html[data-theme='dark'] .folder-panel,
+html[data-theme='dark'] .shopping-list-panel,
+html[data-theme='dark'] .shopping-list-heading,
+html[data-theme='dark'] .meal-list,
+html[data-theme='dark'] .stat-card,
+html[data-theme='dark'] .scanner-modal,
+html[data-theme='dark'] .pending-card,
+html[data-theme='dark'] .workspace-card,
+html[data-theme='dark'] .sidebar-help,
+html[data-theme='dark'] .preview-card,
+html[data-theme='dark'] .shopping-add-form,
+html[data-theme='dark'] .meal-form,
+html[data-theme='dark'] .member-group-options,
+html[data-theme='dark'] .member-panel input:not([type='checkbox']),
+html[data-theme='dark'] .product-entry-fields input,
+html[data-theme='dark'] .product-entry-fields select,
+html[data-theme='dark'] .manual-form input,
+html[data-theme='dark'] .manual-form select,
+html[data-theme='dark'] .manual-form textarea,
+html[data-theme='dark'] .bulk-form textarea,
+html[data-theme='dark'] .receipt-product-row input,
+html[data-theme='dark'] .folder-create-form input,
+html[data-theme='dark'] .folder-create-form select,
+html[data-theme='dark'] .meal-form input,
+html[data-theme='dark'] .meal-form textarea,
+html[data-theme='dark'] .shopping-add-form input,
+html[data-theme='dark'] .calendar-event-form input:not([type='checkbox']):not([type='color']),
+html[data-theme='dark'] .calendar-event-form textarea,
+html[data-theme='dark'] .consume-amount,
+html[data-theme='dark'] .quantity-control,
+html[data-theme='dark'] .group-switcher select,
+html[data-theme='dark'] .search-box,
+html[data-theme='dark'] .destination-selector select,
+html[data-theme='dark'] .shopping-quantity-control,
+html[data-theme='dark'] .product-table thead {
+  border-color: #3f4147;
+  background-color: #313338;
+}
+
+html[data-theme='dark'] .pending-card,
+html[data-theme='dark'] .member-panel,
+html[data-theme='dark'] .list-section,
+html[data-theme='dark'] .folder-panel,
+html[data-theme='dark'] .shopping-list-panel,
+html[data-theme='dark'] .shopping-list-heading,
+html[data-theme='dark'] .meal-list,
+html[data-theme='dark'] .stat-card,
+html[data-theme='dark'] .scanner-modal {
+  border-color: #3f4147;
+  background-color: #313338;
+}
+
+html[data-theme='dark'] .auth-art {
+  background:
+    radial-gradient(ellipse at 87% 21%, rgba(255, 255, 255, 0.06), transparent 26%),
+    radial-gradient(ellipse at 5% 87%, rgba(255, 255, 255, 0.04), transparent 36%),
+    #1e1f22;
+}
+
+html[data-theme='dark'] .auth-form input,
+html[data-theme='dark'] .receipt-product-row input,
+html[data-theme='dark'] .destination-selector select,
+html[data-theme='dark'] .shopping-quantity-control,
+html[data-theme='dark'] .shopping-item,
+html[data-theme='dark'] .meal-calendar .fc,
+html[data-theme='dark'] .shared-calendar .fc,
+html[data-theme='dark'] .shared-calendar .fc-theme-standard td,
+html[data-theme='dark'] .shared-calendar .fc-theme-standard th,
+html[data-theme='dark'] .shared-calendar .fc-theme-standard .fc-scrollgrid {
+  border-color: #3f4147;
+  color: #f2f3f5;
+  background-color: #313338;
+}
+
+html[data-theme='dark'] .product-table td,
+html[data-theme='dark'] .empty-state,
+html[data-theme='dark'] .empty-filter,
+html[data-theme='dark'] .product-table .folder-filter-row td,
+html[data-theme='dark'] .product-table tbody tr,
+html[data-theme='dark'] .shopping-item,
+html[data-theme='dark'] .meal-card {
+  border-color: #3f4147;
+}
+
+html[data-theme='dark'] .brand,
+html[data-theme='dark'] .breadcrumb strong,
+html[data-theme='dark'] .page-heading h1,
+html[data-theme='dark'] .workspace-card strong,
+html[data-theme='dark'] .member-panel-heading h2,
+html[data-theme='dark'] .list-toolbar h2,
+html[data-theme='dark'] .meal-list h2,
+html[data-theme='dark'] .empty-state h3,
+html[data-theme='dark'] .no-pending strong,
+html[data-theme='dark'] .member-info strong,
+html[data-theme='dark'] .product-info strong,
+html[data-theme='dark'] .meal-details strong,
+html[data-theme='dark'] .stat-value,
+html[data-theme='dark'] .shopping-item label > span,
+html[data-theme='dark'] .sidebar-help strong,
+html[data-theme='dark'] .auth-art h1,
+html[data-theme='dark'] .auth-card h2,
+html[data-theme='dark'] .pending-card h1 {
+  color: #f2f3f5;
+}
+
+html[data-theme='dark'] .eyebrow,
+html[data-theme='dark'] .page-heading p,
+html[data-theme='dark'] .member-panel-heading p,
+html[data-theme='dark'] .list-toolbar p,
+html[data-theme='dark'] .breadcrumb,
+html[data-theme='dark'] .member-info span,
+html[data-theme='dark'] .member-date,
+html[data-theme='dark'] .footer,
+html[data-theme='dark'] .sidebar-help p,
+html[data-theme='dark'] .workspace-card span:not(.online-dot),
+html[data-theme='dark'] .account-details span,
+html[data-theme='dark'] .sync-indicator,
+html[data-theme='dark'] .product-table td,
+html[data-theme='dark'] .product-table th,
+html[data-theme='dark'] .product-info span,
+html[data-theme='dark'] .meal-details span,
+html[data-theme='dark'] .meal-details p,
+html[data-theme='dark'] .calendar-event-count,
+html[data-theme='dark'] .calendar-empty-hint,
+html[data-theme='dark'] .empty-state p,
+html[data-theme='dark'] .no-pending,
+html[data-theme='dark'] .auth-art-content > p,
+html[data-theme='dark'] .auth-foot,
+html[data-theme='dark'] .auth-description,
+html[data-theme='dark'] .pending-card > p {
+  color: #b5bac1;
+}
+
+html[data-theme='dark'] .button-secondary,
+html[data-theme='dark'] .group-switcher select,
+html[data-theme='dark'] .sidebar-help button,
+html[data-theme='dark'] .folder-mini,
+html[data-theme='dark'] .folder-mini-delete,
+html[data-theme='dark'] .theme-toggle,
+html[data-theme='dark'] .modal-close {
+  border-color: #4a4d55;
+  color: #e3e5e8;
+  background-color: #313338;
+}
+
+html[data-theme='dark'] .button-secondary:hover,
+html[data-theme='dark'] .sidebar-help button:hover,
+html[data-theme='dark'] .nav-item:hover,
+html[data-theme='dark'] .theme-toggle:hover {
+  background-color: #3a3c42;
+}
+
+html[data-theme='dark'] .nav-item.active {
+  color: #f2f3f5;
+  background-color: #3a3c42;
+}
+
+html[data-theme='dark'] .nav-item.active .nav-icon,
+html[data-theme='dark'] .subtle-count {
+  color: #e3e5e8;
+  background-color: #44464d;
+}
+
+html[data-theme='dark'] .auth-form input,
+html[data-theme='dark'] input::placeholder,
+html[data-theme='dark'] textarea::placeholder,
+html[data-theme='dark'] .receipt-products-heading,
+html[data-theme='dark'] .receipt-product-row label,
+html[data-theme='dark'] .receipt-progress,
+html[data-theme='dark'] .destination-selector,
+html[data-theme='dark'] .shopping-quantity-control input,
+html[data-theme='dark'] .shopping-item-expiration,
+html[data-theme='dark'] .zone-context,
+html[data-theme='dark'] .event-zone-context {
+  color: #b5bac1;
+}
+
+html[data-theme='dark'] .topbar-avatar {
+  border-color: #2b2d31;
+}
+
+html[data-theme='dark'] .meal-calendar .fc,
+html[data-theme='dark'] .shared-calendar .fc,
+html[data-theme='dark'] .meal-calendar .fc .fc-col-header-cell-cushion,
+html[data-theme='dark'] .shared-calendar .fc .fc-col-header-cell-cushion,
+html[data-theme='dark'] .meal-calendar .fc .fc-daygrid-day-number,
+html[data-theme='dark'] .shared-calendar .fc .fc-daygrid-day-number,
+html[data-theme='dark'] .meal-calendar .fc .fc-toolbar-title {
+  --fc-border-color: #3f4147;
+  --fc-neutral-bg-color: #313338;
+  color: #e3e5e8;
+}
+
+@media (max-width: 760px) {
+  html[data-theme='dark'] .sidebar {
+    border-top-color: #1e1f22;
+    background-color: #1e1f22;
+  }
+}
+
 @media (max-width: 440px) {
   .topbar {
     padding: 0 13px;
@@ -3721,6 +4037,7 @@ html[data-theme='dark'] .manual-form input,
 html[data-theme='dark'] .manual-form select,
 html[data-theme='dark'] .manual-form textarea,
 html[data-theme='dark'] .bulk-form textarea,
+html[data-theme='dark'] .receipt-product-row input,
 html[data-theme='dark'] .folder-create-form input,
 html[data-theme='dark'] .folder-create-form select,
 html[data-theme='dark'] .meal-form input,
@@ -3740,8 +4057,25 @@ html[data-theme='dark'] .shopping-add-form input,
 html[data-theme='dark'] .meal-form input,
 html[data-theme='dark'] .meal-form textarea,
 html[data-theme='dark'] .product-entry-fields input,
-html[data-theme='dark'] .product-entry-fields select {
+html[data-theme='dark'] .product-entry-fields select,
+html[data-theme='dark'] .receipt-product-row input {
   color: #e4e9e1;
+}
+
+html[data-theme='dark'] .receipt-products-heading,
+html[data-theme='dark'] .receipt-product-row label,
+html[data-theme='dark'] .receipt-progress {
+  color: #a5afa3;
+}
+
+html[data-theme='dark'] .receipt-products-heading span {
+  color: #8f9b8e;
+}
+
+html[data-theme='dark'] .receipt-remove-button {
+  border-color: #5a3936;
+  color: #f2aaa3;
+  background-color: #382624;
 }
 
 html[data-theme='dark'] input::placeholder,

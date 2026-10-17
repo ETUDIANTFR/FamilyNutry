@@ -7,6 +7,8 @@ import { supabase, isSupabaseConfigured } from './lib/supabase'
 import type { CalendarEvent, Meal, Product, Profile, ShoppingListItem, StorageFolder, Zone, ZoneMembership } from './lib/supabase'
 import { refreshAndroidWidgets } from './lib/androidWidgets'
 import type { CalendarEventMove } from './SharedCalendar'
+import { parseReceiptText } from './lib/receipt'
+import type { ReceiptProduct } from './lib/receipt'
 import './App.css'
 
 type OffProduct = {
@@ -187,6 +189,12 @@ function App() {
   const [bulkOpen, setBulkOpen] = useState(false)
   const [bulkText, setBulkText] = useState('')
   const [importingBulk, setImportingBulk] = useState(false)
+  const [receiptOpen, setReceiptOpen] = useState(false)
+  const [receiptProducts, setReceiptProducts] = useState<ReceiptProduct[]>([])
+  const [receiptScanning, setReceiptScanning] = useState(false)
+  const [receiptProgress, setReceiptProgress] = useState('')
+  const [receiptError, setReceiptError] = useState('')
+  const [savingReceipt, setSavingReceipt] = useState(false)
   const [activeTab, setActiveTab] = useState<AppTab>(() => {
     const savedTab = localStorage.getItem('nutriscan-active-tab')
     return savedTab === 'shopping' || savedTab === 'meals' || savedTab === 'calendar' || savedTab === 'members'
@@ -231,6 +239,7 @@ function App() {
   const [calendarEventAllDay, setCalendarEventAllDay] = useState(false)
   const [savingCalendarEvent, setSavingCalendarEvent] = useState(false)
   const [importingCalendar, setImportingCalendar] = useState(false)
+  const receiptFileInput = useRef<HTMLInputElement>(null)
   const [widgetUrl, setWidgetUrl] = useState<string | null>(null)
   const reportWidgetError = useCallback((action: string, error: unknown) => {
     setNotice({ type: 'error', text: `${action} : ${error instanceof Error ? error.message : 'erreur native.'}` })
@@ -1276,6 +1285,123 @@ function App() {
     setImportingBulk(false)
   }
 
+  async function scanReceipt(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0]
+    event.currentTarget.value = ''
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      setReceiptError('Sélectionnez une image du ticket de caisse.')
+      return
+    }
+
+    setReceiptScanning(true)
+    setReceiptError('')
+    setReceiptProgress('Préparation de la reconnaissance…')
+    setReceiptProducts([])
+    try {
+      const { createWorker } = await import('tesseract.js')
+      const worker = await createWorker('fra', 1, {
+        logger: (message) => {
+          if (message.status) {
+            const percentage = typeof message.progress === 'number'
+              ? ` ${Math.round(message.progress * 100)} %`
+              : ''
+            setReceiptProgress(`${message.status}${percentage}`)
+          }
+        },
+      })
+      try {
+        const { data } = await worker.recognize(file)
+        const productsFound = parseReceiptText(data.text)
+        if (productsFound.length === 0) {
+          throw new Error('Aucun produit n’a été détecté. Essayez une photo plus nette et bien cadrée.')
+        }
+        setReceiptProducts(productsFound.map((product) => ({ ...product, id: crypto.randomUUID() })))
+        setReceiptProgress('')
+      } finally {
+        await worker.terminate()
+      }
+    } catch (error) {
+      setReceiptError(error instanceof Error ? error.message : 'La lecture du ticket a échoué.')
+      setReceiptProgress('')
+    } finally {
+      setReceiptScanning(false)
+    }
+  }
+
+  async function saveReceiptProducts() {
+    if (!sessionUser || !creationZoneId) return
+    const validProducts = receiptProducts.filter((product) =>
+      product.name.trim() && Number.isFinite(product.quantity) && product.quantity > 0,
+    )
+    if (validProducts.length !== receiptProducts.length || validProducts.length === 0) {
+      setReceiptError('Vérifiez le nom et le nombre de chaque produit avant de continuer.')
+      return
+    }
+
+    setSavingReceipt(true)
+    setReceiptError('')
+    const { data: zoneProducts, error: loadError } = await supabase
+      .from('products')
+      .select('id, product_name, quantity, quantity_unit')
+      .eq('zone_id', creationZoneId)
+    if (loadError) {
+      setReceiptError(`Impossible de vérifier le stock : ${loadError.message}`)
+      setSavingReceipt(false)
+      return
+    }
+
+    let added = 0
+    const failedIds: string[] = []
+    const errors: string[] = []
+    for (const product of validProducts) {
+      const name = product.name.trim()
+      const existing = zoneProducts?.find((item) =>
+        item.quantity_unit === 'unité'
+        && item.product_name.trim().toLocaleLowerCase('fr') === name.toLocaleLowerCase('fr'),
+      )
+      const result = existing
+        ? await supabase.from('products').update({
+          quantity: existing.quantity + product.quantity,
+          updated_by: sessionUser.id,
+        }).eq('id', existing.id)
+        : await supabase.from('products').insert({
+          barcode: `MANUAL-${crypto.randomUUID()}`,
+          product_name: name,
+          brand: null,
+          quantity_label: null,
+          category: null,
+          nutriscore: null,
+          nova_group: null,
+          image_url: null,
+          quantity: product.quantity,
+          quantity_unit: 'unité',
+          expiration_date: null,
+          folder_id: null,
+          created_by: sessionUser.id,
+          updated_by: sessionUser.id,
+          zone_id: creationZoneId,
+        })
+      if (result.error) {
+        failedIds.push(product.id)
+        errors.push(`${name} : ${result.error.message}`)
+      } else {
+        added += 1
+      }
+    }
+
+    await loadProducts()
+    setReceiptProducts((items) => items.filter((item) => failedIds.includes(item.id)))
+    if (errors.length > 0) {
+      setReceiptError(`${added} produit(s) ajouté(s). Échec pour ${errors.join(' ; ')}`)
+    } else {
+      setReceiptOpen(false)
+      setReceiptProducts([])
+      setNotice({ type: 'success', text: `${added} produit(s) du ticket ajouté(s) au stock.` })
+    }
+    setSavingReceipt(false)
+  }
+
   const moveProductToFolder = useCallback(async (productId: string, folderId: string) => {
     const product = products.find((item) => item.id === productId)
     const folder = folders.find((item) => item.id === folderId && item.kind === 'inventory')
@@ -2056,7 +2182,7 @@ function App() {
           <NoticeView notice={notice} />
           {activeTab === 'products' ? (
             <>
-              <section className="page-heading"><div><span className="eyebrow">VOTRE PANIER COLLECTIF</span><h1>La liste des courses<span className="heading-period">.</span></h1><p>Les bons produits, les bonnes infos, au même endroit.</p></div><div className="heading-actions"><button className="button button-secondary" onClick={() => { setBulkOpen(true); setNotice(null) }}>＋ Ajouter plusieurs</button><button className="button button-secondary" onClick={() => { setManualOpen(true); setNotice(null) }}>＋ Ajouter manuellement</button><button className="button button-primary add-button" onClick={openScanner}><span className="scan-icon">▣</span>Scanner<span className="button-arrow">↗</span></button></div></section>
+              <section className="page-heading"><div><span className="eyebrow">VOTRE PANIER COLLECTIF</span><h1>La liste des courses<span className="heading-period">.</span></h1><p>Les bons produits, les bonnes infos, au même endroit.</p></div><div className="heading-actions"><button className="button button-secondary" onClick={() => { setReceiptOpen(true); setReceiptError(''); setReceiptProducts([]); setNotice(null) }}>▧ Photo du ticket</button><button className="button button-secondary" onClick={() => { setBulkOpen(true); setNotice(null) }}>＋ Ajouter plusieurs</button><button className="button button-secondary" onClick={() => { setManualOpen(true); setNotice(null) }}>＋ Ajouter manuellement</button><button className="button button-primary add-button" onClick={openScanner}><span className="scan-icon">▣</span>Scanner<span className="button-arrow">↗</span></button></div></section>
               <section className="stats-grid" aria-label="Résumé de la liste">
                 <StatCard label="Produits dans la liste" value={groupProducts.length.toString().padStart(2, '0')} caption="références en stock partagé" icon="▦" tone="green" />
                 <StatCard label="Mieux notés · A ou B" value={`${healthyProducts}/${gradedProducts.length}`} caption="selon le Nutri-Score" icon="✳" tone="blue" />
@@ -2548,6 +2674,7 @@ function App() {
         </div>
       )}
       {folderModalOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !savingFolder) setFolderModalOpen(false) }}><section className="scanner-modal folder-modal" role="dialog" aria-modal="true" aria-labelledby="folder-modal-title"><button className="modal-close" type="button" onClick={() => setFolderModalOpen(false)} aria-label="Fermer" disabled={savingFolder}>×</button><span className="eyebrow">ORGANISATION</span><h2 id="folder-modal-title">Créer un dossier</h2><p className="modal-description">Choisissez un nom, une icône et une couleur pour votre dossier.</p><form className="folder-create-form" onSubmit={(event) => void createFolder(event)}><label>Nom du dossier<input value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} placeholder="Ex. Placard" maxLength={80} required autoFocus /></label><label>Liste<select value={newFolderKind} onChange={(event) => setNewFolderKind(event.target.value as 'inventory' | 'shopping')}><option value="inventory">Inventaire</option><option value="shopping">Liste de courses</option></select></label><label>Icône<input value={newFolderIcon} onChange={(event) => setNewFolderIcon(event.target.value)} maxLength={4} aria-label="Icône du dossier" /></label><label>Couleur<input type="color" value={newFolderColor} onChange={(event) => setNewFolderColor(event.target.value)} aria-label="Couleur du dossier" /></label><button className="button button-primary button-wide" type="submit" disabled={savingFolder || !newFolderName.trim() || !creationZoneId}>{savingFolder ? 'Création…' : 'Créer le dossier'}<span>↗</span></button></form></section></div>}
+      {receiptOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !receiptScanning && !savingReceipt) setReceiptOpen(false) }}><section className="scanner-modal receipt-modal" role="dialog" aria-modal="true" aria-labelledby="receipt-title"><button className="modal-close" type="button" onClick={() => setReceiptOpen(false)} aria-label="Fermer" disabled={receiptScanning || savingReceipt}>×</button><span className="eyebrow">MISE À JOUR DU STOCK</span><h2 id="receipt-title">Lire un ticket de caisse</h2><p className="modal-description">Prenez une photo ou choisissez une image. Les produits sont reconnus sur cet appareil, puis vous pourrez vérifier leurs noms et quantités avant de les ajouter au stock.</p><button className="button button-primary button-wide receipt-photo-button" type="button" onClick={() => receiptFileInput.current?.click()} disabled={receiptScanning || savingReceipt}>▧ {receiptScanning ? 'Lecture en cours…' : 'Prendre une photo / choisir une image'}<span>↗</span></button><input ref={receiptFileInput} className="receipt-file-input" type="file" accept="image/*" capture="environment" onChange={(event) => void scanReceipt(event)} disabled={receiptScanning || savingReceipt} />{receiptProgress && <p className="receipt-progress" role="status">{receiptProgress}</p>}{receiptError && <p className="receipt-error" role="alert">{receiptError}</p>}{receiptProducts.length > 0 && <><div className="receipt-products-heading"><strong>{receiptProducts.length} produit(s) détecté(s)</strong><span>Vérifiez les quantités</span></div><div className="receipt-products">{receiptProducts.map((product, index) => <div className="receipt-product-row" key={product.id}><label>Produit<input aria-label={`Nom du produit ${index + 1}`} value={product.name} maxLength={120} onChange={(event) => setReceiptProducts((items) => items.map((item) => item.id === product.id ? { ...item, name: event.target.value } : item))} disabled={savingReceipt} /></label><label>Nombre<input aria-label={`Nombre de ${product.name}`} type="number" min="1" step="1" value={product.quantity} onChange={(event) => setReceiptProducts((items) => items.map((item) => item.id === product.id ? { ...item, quantity: Number(event.target.value) } : item))} disabled={savingReceipt} /></label><button className="receipt-remove-button" type="button" onClick={() => setReceiptProducts((items) => items.filter((item) => item.id !== product.id))} aria-label={`Retirer ${product.name}`} disabled={savingReceipt}>×</button></div>)}</div><button className="button button-primary button-wide receipt-save-button" type="button" onClick={() => void saveReceiptProducts()} disabled={savingReceipt || receiptProducts.length === 0 || !creationZoneId}>{savingReceipt ? 'Ajout au stock…' : `Ajouter ${receiptProducts.length} produit(s) au stock`}<span>↗</span></button></>}</section></div>}
       {bulkOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !importingBulk) setBulkOpen(false) }}><section className="scanner-modal manual-modal bulk-modal" role="dialog" aria-modal="true" aria-labelledby="bulk-title"><button className="modal-close" onClick={() => setBulkOpen(false)} aria-label="Fermer" disabled={importingBulk}>×</button><span className="eyebrow">AJOUT EN LOT</span><h2 id="bulk-title">Ajouter plusieurs produits</h2><p className="modal-description">Collez un produit par ligne. Format : nom ou code-barres | date JJ/MM/AAAA | quantité. La date et la quantité sont facultatives.</p><form className="bulk-form" onSubmit={(event) => void importBulkProducts(event)}><DestinationSelector value={addDestination} onChange={setAddDestination} disabled={importingBulk} /><label htmlFor="bulk-products">Produits à ajouter<textarea id="bulk-products" value={bulkText} onChange={(event) => setBulkText(event.target.value)} placeholder={'LAIT | 22/07/2027\n3155250001298|22/07/2027|2\nLAIT\nLAIT||2'} rows={8} required disabled={importingBulk} /></label><p className="bulk-example">Les codes-barres sont recherchés sur Open Food Facts. Une ligne en échec reste dans le champ pour pouvoir être corrigée ou relancée.</p><button className="button button-primary button-wide" disabled={importingBulk || !bulkText.trim() || !creationZoneId}>{importingBulk ? 'Import en cours…' : 'Ajouter les produits'}<span>↗</span></button></form></section></div>}
       {manualOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setManualOpen(false) }}><section className="scanner-modal manual-modal" role="dialog" aria-modal="true" aria-labelledby="manual-title"><button className="modal-close" onClick={() => setManualOpen(false)} aria-label="Fermer">×</button><span className="eyebrow">AJOUTER À LA LISTE</span><h2 id="manual-title">Saisie manuelle</h2><p className="modal-description">Ajoutez un produit même s’il n’a pas de code-barres.</p><form className="manual-form" onSubmit={(event) => void saveManualProduct(event)}><DestinationSelector value={addDestination} onChange={setAddDestination} disabled={savingProduct} /><label>Nom du produit<input value={manualName} onChange={(event) => setManualName(event.target.value)} placeholder="Ex. farine de blé" required maxLength={120} /></label><label>Quantité<input type="number" min="0.001" step="0.001" value={manualAmount} onChange={(event) => setManualAmount(event.target.value)} required /></label><label>Unité<select value={manualUnit} onChange={(event) => setManualUnit(event.target.value)}><option>unité</option><option>g</option><option>kg</option><option>ml</option><option>l</option></select></label><label><span>Date de péremption</span><div className="expiration-controls"><input type="date" value={expirationDate} onChange={(event) => setExpirationDate(event.target.value)} /><button type="button" className="expiration-button" onClick={() => addExpirationOffset(1)} aria-label="Ajouter un jour">＋</button><button type="button" className="expiration-button" onClick={() => addExpirationOffset(30)} aria-label="Ajouter un mois">＋＋</button><button type="button" className="expiration-button" onClick={() => addExpirationOffset(365)} aria-label="Ajouter un an">＋＋＋</button></div></label><button className="button button-primary button-wide" disabled={savingProduct}>{savingProduct ? 'Ajout en cours…' : 'Ajouter à la liste'}<span>↗</span></button></form></section></div>}
       {scannerOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setScannerOpen(false) }}><section className="scanner-modal" role="dialog" aria-modal="true" aria-labelledby="scanner-title"><button className="modal-close" onClick={() => setScannerOpen(false)} aria-label="Fermer">×</button><span className="eyebrow">AJOUTER À LA LISTE</span><h2 id="scanner-title">Scanner un produit</h2><p className="modal-description">Pointez la caméra sur le code-barres du produit.</p><DestinationSelector value={addDestination} onChange={setAddDestination} disabled={savingProduct || lookupBusy} /><div className="scanner-frame">{scannerOpen && <div id="qr-reader" />}{!scanning && <div className="scanner-placeholder"><span>▣</span><p>Autorisez l’accès à la caméra<br />pour scanner le code-barres.</p></div>}</div><div className="scanner-divider"><span>OU SAISIR LE CODE</span></div><form className="barcode-form" onSubmit={(event) => void lookupProduct(event)}><input value={barcode} onChange={(event) => { setBarcode(event.target.value); setFoundProduct(null) }} placeholder="Ex. 3017620422003" inputMode="numeric" aria-label="Code-barres du produit" /><button className="button button-primary" disabled={lookupBusy || !barcode.trim()}>{lookupBusy ? 'Recherche…' : 'Rechercher'}</button></form>{foundProduct && <div className="found-product"><ProductPreview data={foundProduct.data} /><div className="product-entry-fields"><label>Quantité<input type="number" min="0.001" step="0.001" value={newAmount} onChange={(event) => setNewAmount(event.target.value)} /></label><label>Unité<select value={newUnit} onChange={(event) => setNewUnit(event.target.value)}><option>unité</option><option>g</option><option>kg</option><option>ml</option><option>l</option></select></label><label><span>Date de péremption</span><div className="expiration-controls"><input type="date" value={expirationDate} onChange={(event) => setExpirationDate(event.target.value)} /><button type="button" className="expiration-button" onClick={() => addExpirationOffset(1)} aria-label="Ajouter un jour">＋</button><button type="button" className="expiration-button" onClick={() => addExpirationOffset(30)} aria-label="Ajouter un mois">＋＋</button><button type="button" className="expiration-button" onClick={() => addExpirationOffset(365)} aria-label="Ajouter un an">＋＋＋</button></div></label></div><button className="button button-primary button-wide" onClick={() => void saveProduct()} disabled={savingProduct || !Number.isFinite(Number(newAmount)) || Number(newAmount) <= 0}>{savingProduct ? 'Ajout en cours…' : 'Ajouter à la liste partagée'}<span>↗</span></button></div>}<p className="scanner-privacy">L’accès caméra est utilisé uniquement pour lire le code-barres.</p></section></div>}
