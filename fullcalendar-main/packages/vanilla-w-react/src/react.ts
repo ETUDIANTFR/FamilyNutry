@@ -1,2 +1,0 @@
-
-export { createElement } from 'react'

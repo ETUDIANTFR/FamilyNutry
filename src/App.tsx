@@ -1,8 +1,11 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { App as CapacitorApp } from '@capacitor/app'
+import { Capacitor } from '@capacitor/core'
 import type { Html5Qrcode } from 'html5-qrcode'
 import type { ChangeEvent, CSSProperties, DragEvent, FormEvent } from 'react'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
 import type { CalendarEvent, Meal, Product, Profile, ShoppingListItem, StorageFolder, Zone, ZoneMembership } from './lib/supabase'
+import { refreshAndroidWidgets } from './lib/androidWidgets'
 import type { CalendarEventMove } from './SharedCalendar'
 import './App.css'
 
@@ -176,6 +179,8 @@ function App() {
   const [addDestination, setAddDestination] = useState<'inventory' | 'shopping'>('inventory')
   const [shoppingQuantityDrafts, setShoppingQuantityDrafts] = useState<Record<string, string>>({})
   const shoppingTouchTimer = useRef<number | null>(null)
+  const receivedWidgetUrls = useRef(new Set<string>())
+  const processedWidgetUrls = useRef(new Set<string>())
   const [selectedProducts, setSelectedProducts] = useState<Record<string, number>>({})
   const [expirationTarget, setExpirationTarget] = useState<ExpirationTarget | null>(null)
   const [expirationDraft, setExpirationDraft] = useState('')
@@ -203,6 +208,33 @@ function App() {
   const [calendarEventAllDay, setCalendarEventAllDay] = useState(false)
   const [savingCalendarEvent, setSavingCalendarEvent] = useState(false)
   const [importingCalendar, setImportingCalendar] = useState(false)
+  const [widgetUrl, setWidgetUrl] = useState<string | null>(null)
+  const reportWidgetError = useCallback((action: string, error: unknown) => {
+    setNotice({ type: 'error', text: `${action} : ${error instanceof Error ? error.message : 'erreur native.'}` })
+  }, [])
+  const handleWidgetUrl = useCallback((url: string) => {
+    if (receivedWidgetUrls.current.has(url)) return
+    let target: URL
+    try {
+      target = new URL(url)
+    } catch {
+      reportWidgetError('Le lien du widget est invalide', new Error('format incorrect.'))
+      return
+    }
+    if (target.protocol !== 'familynutry:') return
+    if (target.hostname !== 'shopping' && target.hostname !== 'calendar') {
+      reportWidgetError('Ce lien de widget n’est pas reconnu', new Error('destination inconnue.'))
+      return
+    }
+
+    receivedWidgetUrls.current.add(url)
+    if (receivedWidgetUrls.current.size > 20) {
+      const oldestUrl = receivedWidgetUrls.current.values().next().value
+      if (oldestUrl) receivedWidgetUrls.current.delete(oldestUrl)
+    }
+    setActiveTab(target.hostname)
+    setWidgetUrl(url)
+  }, [reportWidgetError])
   useEffect(() => {
     document.documentElement.dataset.theme = darkMode ? 'dark' : 'light'
     localStorage.setItem('nutriscan-theme', darkMode ? 'dark' : 'light')
@@ -543,6 +575,33 @@ function App() {
   useEffect(() => {
     if (profile?.role === 'admin') setDarkMode(true)
   }, [profile])
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return
+
+    let active = true
+    let removeListener: (() => void) | undefined
+    void CapacitorApp.addListener('appUrlOpen', ({ url }) => handleWidgetUrl(url))
+      .then((listener) => {
+        if (active) removeListener = () => { void listener.remove() }
+        else void listener.remove()
+      })
+      .catch((error: unknown) => {
+        reportWidgetError('Ouverture depuis un widget impossible', error)
+      })
+    void CapacitorApp.getLaunchUrl()
+      .then((launch) => {
+        if (active && launch?.url) handleWidgetUrl(launch.url)
+      })
+      .catch((error: unknown) => {
+        reportWidgetError('Lecture du lien du widget impossible', error)
+      })
+
+    return () => {
+      active = false
+      removeListener?.()
+    }
+  }, [handleWidgetUrl, reportWidgetError])
 
   useEffect(() => {
     if (!profile || profile.status !== 'approved' || !sessionUser) return
@@ -1736,6 +1795,81 @@ function App() {
   })
   const gradedProducts = groupProducts.filter((product) => product.nutriscore)
   const healthyProducts = gradedProducts.filter((product) => product.nutriscore === 'a' || product.nutriscore === 'b').length
+
+  useEffect(() => {
+    const url = widgetUrl
+    if (!url || profile?.status !== 'approved' || processedWidgetUrls.current.has(url)) return
+    processedWidgetUrls.current.add(url)
+
+    const target = new URL(url)
+    const targetTab = target.hostname
+    const itemId = target.searchParams.get('toggle')
+    if (targetTab !== 'shopping' || !itemId) return
+
+    void (async () => {
+      const { data, error } = await supabase
+        .from('shopping_list_items')
+        .select('is_checked')
+        .eq('id', itemId)
+        .maybeSingle()
+      if (error) {
+        setNotice({ type: 'error', text: `Mise à jour depuis le widget impossible : ${error.message}` })
+        return
+      }
+      if (!data) {
+        setNotice({ type: 'error', text: 'Cet article n’existe plus dans la liste partagée.' })
+        await loadShoppingItems()
+        return
+      }
+
+      const { error: updateError } = await supabase
+        .from('shopping_list_items')
+        .update({ is_checked: !data.is_checked })
+        .eq('id', itemId)
+      if (updateError) {
+        setNotice({ type: 'error', text: `Mise à jour depuis le widget impossible : ${updateError.message}` })
+        return
+      }
+      await loadShoppingItems()
+    })()
+  }, [loadShoppingItems, profile, widgetUrl])
+
+  useEffect(() => {
+    const shopping = profile?.status === 'approved'
+      ? shoppingItems
+        .filter((item) => !activeZoneId || item.zone_id === activeZoneId)
+        .filter((item) => {
+          const consumedFolder = folders.some((folder) =>
+            folder.kind === 'shopping' && folder.name === 'Consommer' && folder.id === item.folder_id,
+          )
+          if (consumedFolder) return false
+          return selectedShoppingFolder === null
+            || (selectedShoppingFolder === 'unfiled' ? !item.folder_id : item.folder_id === selectedShoppingFolder)
+        })
+        .filter((item) => !item.is_checked)
+        .slice(0, 4)
+        .map((item) => ({ id: item.id, name: item.name, quantity: item.quantity }))
+      : []
+    const now = Date.now()
+    const calendar = profile?.status === 'approved'
+      ? calendarEvents
+        .filter((event) => !activeZoneId || event.zone_id === activeZoneId)
+        .filter((event) => new Date(event.ends_at).getTime() >= now)
+        .sort((first, second) => first.starts_at.localeCompare(second.starts_at))
+        .slice(0, 4)
+        .map((event) => ({
+          id: event.id,
+          title: event.title,
+          dateLabel: event.all_day
+            ? new Date(`${event.starts_at.slice(0, 10)}T12:00:00`).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })
+            : new Date(event.starts_at).toLocaleString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }),
+        }))
+      : []
+
+    void refreshAndroidWidgets(shopping, calendar).catch((error: unknown) => {
+      reportWidgetError('Actualisation des widgets impossible', error)
+    })
+  }, [activeZoneId, calendarEvents, folders, profile, reportWidgetError, selectedShoppingFolder, shoppingItems])
 
   if (!isSupabaseConfigured) {
     return <SetupScreen />

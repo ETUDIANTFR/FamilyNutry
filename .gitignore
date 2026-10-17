@@ -11,6 +11,15 @@ dist
 dist-ssr
 *.local
 
+# Native Android project and its generated APK are not part of the website.
+/fullcalendar-main/
+/android/
+/capacitor.config.ts
+/ANDROID.md
+/scripts/pin-android-gradle.mjs
+*.apk
+*.aab
+
 .env
 .env.*
 !.env.example
