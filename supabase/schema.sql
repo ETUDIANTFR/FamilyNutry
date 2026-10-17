@@ -13,6 +13,7 @@ create table public.profiles (
 create table public.zones (
   id uuid primary key default gen_random_uuid(),
   name text not null unique check (length(trim(name)) between 1 and 80),
+  color text not null default '#376D48' check (color ~ '^#[0-9A-Fa-f]{6}$'),
   created_by uuid references public.profiles (id) on delete set null,
   created_at timestamptz not null default now()
 );

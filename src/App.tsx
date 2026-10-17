@@ -82,6 +82,21 @@ function toLocalDateTime(value: Date) {
   return date.toISOString().slice(0, 16)
 }
 
+function getZonePalette(color: string) {
+  const channels = [1, 3, 5].map((offset) => Number.parseInt(color.slice(offset, offset + 2), 16))
+  const hex = (values: number[]) => `#${values.map((value) => Math.round(value).toString(16).padStart(2, '0')).join('')}`
+  const luminance = channels
+    .map((channel) => channel / 255)
+    .map((channel) => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4)
+    .reduce((total, channel, index) => total + channel * [0.2126, 0.7152, 0.0722][index], 0)
+  return {
+    primary: color,
+    dark: hex(channels.map((channel) => channel * 0.72)),
+    soft: hex(channels.map((channel) => channel * 0.12 + 255 * 0.88)),
+    contrast: luminance > 0.42 ? '#20271f' : '#ffffff',
+  }
+}
+
 function addDaysToDate(value: string, days: number) {
   const date = new Date(`${value}T00:00:00.000Z`)
   date.setUTCDate(date.getUTCDate() + days)
@@ -143,10 +158,12 @@ function App() {
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([])
   const [zones, setZones] = useState<Zone[]>([])
   const [zoneMemberships, setZoneMemberships] = useState<ZoneMembership[]>([])
-  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null)
-  const [writeZoneId, setWriteZoneId] = useState('')
+  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(() => localStorage.getItem('nutriscan-selected-zone') || null)
+  const [writeZoneId, setWriteZoneId] = useState(() => localStorage.getItem('nutriscan-write-zone') || '')
   const [newZoneName, setNewZoneName] = useState('')
   const [zoneNameEdits, setZoneNameEdits] = useState<Record<string, string>>({})
+  const [newZoneColor, setNewZoneColor] = useState('#376d48')
+  const [zoneColorEdits, setZoneColorEdits] = useState<Record<string, string>>({})
   const [savingZone, setSavingZone] = useState(false)
   const [pendingUsers, setPendingUsers] = useState<Profile[]>([])
   const [memberUsers, setMemberUsers] = useState<Profile[]>([])
@@ -170,7 +187,12 @@ function App() {
   const [bulkOpen, setBulkOpen] = useState(false)
   const [bulkText, setBulkText] = useState('')
   const [importingBulk, setImportingBulk] = useState(false)
-  const [activeTab, setActiveTab] = useState<AppTab>('products')
+  const [activeTab, setActiveTab] = useState<AppTab>(() => {
+    const savedTab = localStorage.getItem('nutriscan-active-tab')
+    return savedTab === 'shopping' || savedTab === 'meals' || savedTab === 'calendar' || savedTab === 'members'
+      ? savedTab
+      : 'products'
+  })
   const [selectedProductFolder, setSelectedProductFolder] = useState<string | null>(null)
   const [selectedShoppingFolder, setSelectedShoppingFolder] = useState<string | null>(null)
   const [draggedProductId, setDraggedProductId] = useState<string | null>(null)
@@ -205,6 +227,7 @@ function App() {
   const [calendarEventColor, setCalendarEventColor] = useState('#4F7548')
   const [calendarEventStart, setCalendarEventStart] = useState('')
   const [calendarEventEnd, setCalendarEventEnd] = useState('')
+  const [calendarEventEndCustomized, setCalendarEventEndCustomized] = useState(false)
   const [calendarEventAllDay, setCalendarEventAllDay] = useState(false)
   const [savingCalendarEvent, setSavingCalendarEvent] = useState(false)
   const [importingCalendar, setImportingCalendar] = useState(false)
@@ -240,9 +263,33 @@ function App() {
     localStorage.setItem('nutriscan-theme', darkMode ? 'dark' : 'light')
   }, [darkMode])
 
+  useEffect(() => {
+    localStorage.setItem('nutriscan-active-tab', activeTab)
+  }, [activeTab])
+
+  useEffect(() => {
+    if (selectedZoneId) localStorage.setItem('nutriscan-selected-zone', selectedZoneId)
+    else localStorage.removeItem('nutriscan-selected-zone')
+  }, [selectedZoneId])
+
+  useEffect(() => {
+    localStorage.setItem('nutriscan-write-zone', writeZoneId)
+  }, [writeZoneId])
+
   const activeZoneId = selectedZoneId && zones.some((zone) => zone.id === selectedZoneId) ? selectedZoneId : null
   const effectiveWriteZoneId = zones.some((zone) => zone.id === writeZoneId) ? writeZoneId : zones[0]?.id ?? ''
   const creationZoneId = activeZoneId ?? effectiveWriteZoneId
+  const themeZone = zones.find((zone) => zone.id === (activeZoneId ?? effectiveWriteZoneId))
+
+  useEffect(() => {
+    const palette = getZonePalette(themeZone?.color ?? '#376d48')
+    const root = document.documentElement
+    root.style.setProperty('--green', palette.primary)
+    root.style.setProperty('--green-dark', palette.dark)
+    root.style.setProperty('--green-soft', palette.soft)
+    root.style.setProperty('--green-contrast', palette.contrast)
+  }, [themeZone?.color])
+
   const inventoryFolders = folders.filter((folder) => folder.kind === 'inventory')
   const shoppingFolders = folders.filter((folder) => folder.kind === 'shopping')
   const visibleInventoryFolders = activeZoneId
@@ -423,6 +470,9 @@ function App() {
       return
     }
     setProfile(data)
+    if (data?.role !== 'admin' && localStorage.getItem('nutriscan-active-tab') === 'members') {
+      setActiveTab('products')
+    }
     if (data?.status === 'approved') {
       void loadProducts()
       void loadShoppingItems()
@@ -454,6 +504,9 @@ function App() {
       if (!active) return
       if (profileError) setNotice({ type: 'error', text: `Impossible de charger le profil : ${profileError.message}` })
       setProfile(profileData)
+      if (profileData?.role !== 'admin' && localStorage.getItem('nutriscan-active-tab') === 'members') {
+        setActiveTab('products')
+      }
       if (profileData?.status === 'approved') {
         const { data: productData, error: productsError } = await supabase.from('products').select('*').order('updated_at', { ascending: false })
         if (productsError) setNotice({ type: 'error', text: `Impossible de charger les produits : ${productsError.message}` })
@@ -519,8 +572,6 @@ function App() {
         setCalendarEvents([])
         setZones([])
         setZoneMemberships([])
-        setSelectedZoneId(null)
-        setWriteZoneId('')
         setPendingUsers([])
         setMemberUsers([])
         setLoading(false)
@@ -776,11 +827,12 @@ function App() {
     const name = newZoneName.trim()
     if (!name) return
     setSavingZone(true)
-    const { error } = await supabase.from('zones').insert({ name, created_by: sessionUser?.id ?? null })
+    const { error } = await supabase.from('zones').insert({ name, color: newZoneColor, created_by: sessionUser?.id ?? null })
     if (error) {
       setNotice({ type: 'error', text: `Création du groupe impossible : ${error.message}` })
     } else {
       setNewZoneName('')
+      setNewZoneColor('#376d48')
       setNotice({ type: 'success', text: `Le groupe « ${name} » a été créé.` })
       await loadZones()
     }
@@ -789,8 +841,9 @@ function App() {
 
   async function renameZone(zone: Zone) {
     const name = (zoneNameEdits[zone.id] ?? zone.name).trim()
-    if (!name || name === zone.name) return
-    const { error } = await supabase.from('zones').update({ name }).eq('id', zone.id)
+    const color = zoneColorEdits[zone.id] ?? zone.color
+    if (!name || (name === zone.name && color === zone.color)) return
+    const { error } = await supabase.from('zones').update({ name, color }).eq('id', zone.id)
     if (error) {
       setNotice({ type: 'error', text: `Modification du groupe impossible : ${error.message}` })
       return
@@ -1544,13 +1597,16 @@ function App() {
   function openCalendarEvent(date?: Date, allDay = false) {
     const start = date ?? new Date()
     const startValue = toLocalDateTime(start)
-    const end = new Date(start.getTime() + 60 * 60 * 1000)
+    const end = new Date(start)
+    end.setHours(23, 59, 0, 0)
+    if (end <= start) end.setDate(end.getDate() + 1)
     setEditingEventId(null)
     setCalendarEventTitle('')
     setCalendarEventDescription('')
-    setCalendarEventColor('#4F7548')
+    setCalendarEventColor(zones.find((zone) => zone.id === creationZoneId)?.color ?? '#4F7548')
     setCalendarEventStart(startValue)
     setCalendarEventEnd(toLocalDateTime(end))
+    setCalendarEventEndCustomized(false)
     setCalendarEventAllDay(allDay)
     setEventModalOpen(true)
   }
@@ -1566,6 +1622,7 @@ function App() {
     setCalendarEventEnd(event.all_day
       ? `${addDaysToDate(event.ends_at.slice(0, 10), -1)}T10:00`
       : toLocalDateTime(end))
+    setCalendarEventEndCustomized(true)
     setCalendarEventAllDay(event.all_day)
     setEventModalOpen(true)
   }
@@ -1842,12 +1899,9 @@ function App() {
           const consumedFolder = folders.some((folder) =>
             folder.kind === 'shopping' && folder.name === 'Consommer' && folder.id === item.folder_id,
           )
-          if (consumedFolder) return false
-          return selectedShoppingFolder === null
-            || (selectedShoppingFolder === 'unfiled' ? !item.folder_id : item.folder_id === selectedShoppingFolder)
+          return !consumedFolder
         })
         .filter((item) => !item.is_checked)
-        .slice(0, 4)
         .map((item) => ({ id: item.id, name: item.name, quantity: item.quantity }))
       : []
     const now = Date.now()
@@ -1856,7 +1910,6 @@ function App() {
         .filter((event) => !activeZoneId || event.zone_id === activeZoneId)
         .filter((event) => new Date(event.ends_at).getTime() >= now)
         .sort((first, second) => first.starts_at.localeCompare(second.starts_at))
-        .slice(0, 4)
         .map((event) => ({
           id: event.id,
           title: event.title,
@@ -1866,10 +1919,10 @@ function App() {
         }))
       : []
 
-    void refreshAndroidWidgets(shopping, calendar).catch((error: unknown) => {
+    void refreshAndroidWidgets(shopping, calendar, darkMode).catch((error: unknown) => {
       reportWidgetError('Actualisation des widgets impossible', error)
     })
-  }, [activeZoneId, calendarEvents, folders, profile, reportWidgetError, selectedShoppingFolder, shoppingItems])
+  }, [activeZoneId, calendarEvents, darkMode, folders, profile, reportWidgetError, shoppingItems])
 
   if (!isSupabaseConfigured) {
     return <SetupScreen />
@@ -2220,6 +2273,7 @@ function App() {
                       <span className="eyebrow">VOTRE AGENDA PARTAGÉ</span>
                       <h1>Calendrier<span className="heading-period">.</span></h1>
                       <p>Créez et partagez des événements avec votre groupe.</p>
+                      {themeZone && <p className="zone-context"><span style={{ backgroundColor: themeZone.color }} />Ajout dans <strong>{themeZone.name}</strong></p>}
                       <p className="calendar-import-note">Les événements récurrents des fichiers .ics ne sont pas importés.</p>
                     </div>
                     <div className="heading-actions calendar-actions">
@@ -2281,6 +2335,8 @@ function App() {
                 <form className="group-create-form" onSubmit={(event) => void createZone(event)}>
                   <label htmlFor="new-zone-name">Nom du nouveau groupe</label>
                   <input id="new-zone-name" value={newZoneName} onChange={(event) => setNewZoneName(event.target.value)} placeholder="Ex. Famille, Colocation…" required maxLength={80} />
+                  <label htmlFor="new-zone-color">Couleur du groupe</label>
+                  <input id="new-zone-color" className="group-color-picker" type="color" value={newZoneColor} onChange={(event) => setNewZoneColor(event.target.value)} />
                   <button className="button button-primary" type="submit" disabled={savingZone || !newZoneName.trim()}>{savingZone ? 'Création…' : 'Créer le groupe'}</button>
                 </form>
                 <div className="group-edit-list">
@@ -2288,7 +2344,9 @@ function App() {
                     <form className="group-edit-row" key={zone.id} onSubmit={(event) => { event.preventDefault(); void renameZone(zone) }}>
                       <label htmlFor={`zone-name-${zone.id}`}>Nom du groupe</label>
                       <input id={`zone-name-${zone.id}`} value={zoneNameEdits[zone.id] ?? zone.name} onChange={(event) => setZoneNameEdits((current) => ({ ...current, [zone.id]: event.target.value }))} maxLength={80} required />
-                      <button className="button button-secondary" type="submit" disabled={(zoneNameEdits[zone.id] ?? zone.name).trim() === zone.name}>Renommer</button>
+                      <label htmlFor={`zone-color-${zone.id}`}>Couleur du groupe</label>
+                      <input id={`zone-color-${zone.id}`} className="group-color-picker" type="color" value={zoneColorEdits[zone.id] ?? zone.color ?? '#376d48'} onChange={(event) => setZoneColorEdits((current) => ({ ...current, [zone.id]: event.target.value }))} />
+                      <button className="button button-secondary" type="submit" disabled={(zoneNameEdits[zone.id] ?? zone.name).trim() === zone.name && (zoneColorEdits[zone.id] ?? zone.color) === zone.color}>Enregistrer</button>
                     </form>
                   ))}
                 </div>
@@ -2404,6 +2462,7 @@ function App() {
             <button className="modal-close" type="button" onClick={() => setEventModalOpen(false)} aria-label="Fermer">×</button>
             <span className="eyebrow">AGENDA PARTAGÉ</span>
             <h2 id="calendar-event-title">{editingEventId ? 'Modifier l’événement' : 'Nouvel événement'}</h2>
+            {!editingEventId && themeZone && <p className="event-zone-context"><span style={{ backgroundColor: themeZone.color }} />Cet événement sera ajouté à <strong>{themeZone.name}</strong></p>}
             <form className="calendar-event-form" onSubmit={(event) => void saveCalendarEvent(event)}>
               <label>Titre<input value={calendarEventTitle} onChange={(event) => setCalendarEventTitle(event.target.value)} placeholder="Ex. rendez-vous médical" required maxLength={160} autoFocus /></label>
               <label className="calendar-all-day">
@@ -2413,13 +2472,22 @@ function App() {
               <label>Début<input
                 type={calendarEventAllDay ? 'date' : 'datetime-local'}
                 value={calendarEventAllDay ? calendarEventStart.slice(0, 10) : calendarEventStart}
-                onChange={(event) => setCalendarEventStart(calendarEventAllDay ? `${event.target.value}T09:00` : event.target.value)}
+                onChange={(event) => {
+                  const value = calendarEventAllDay ? `${event.target.value}T09:00` : event.target.value
+                  setCalendarEventStart(value)
+                  if (!editingEventId && !calendarEventEndCustomized && event.target.value) {
+                    setCalendarEventEnd(`${event.target.value.slice(0, 10)}T23:59`)
+                  }
+                }}
                 required
               /></label>
               <label>Fin<input
                 type={calendarEventAllDay ? 'date' : 'datetime-local'}
                 value={calendarEventAllDay ? calendarEventEnd.slice(0, 10) : calendarEventEnd}
-                onChange={(event) => setCalendarEventEnd(calendarEventAllDay ? `${event.target.value}T10:00` : event.target.value)}
+                onChange={(event) => {
+                  setCalendarEventEnd(calendarEventAllDay ? `${event.target.value}T23:59` : event.target.value)
+                  setCalendarEventEndCustomized(true)
+                }}
                 required
               /></label>
               <label className="calendar-color-field">Couleur de l’événement<input type="color" value={calendarEventColor} onChange={(event) => setCalendarEventColor(event.target.value)} /></label>

@@ -82,6 +82,7 @@ export type StorageFolder = {
 export type Zone = {
   id: string
   name: string
+  color: string
   created_by: string | null
   created_at: string
 }
@@ -108,7 +109,7 @@ type Database = {
       calendar_events: Table<CalendarEvent, Omit<CalendarEvent, 'id' | 'created_at'> & Partial<Pick<CalendarEvent, 'id' | 'created_at'>>>
       shopping_list_items: Table<ShoppingListItem, Omit<ShoppingListItem, 'id' | 'created_at' | 'quantity'> & Partial<Pick<ShoppingListItem, 'id' | 'created_at' | 'quantity'>>>
       storage_folders: Table<StorageFolder, Omit<StorageFolder, 'id' | 'created_at'> & Partial<Pick<StorageFolder, 'id' | 'created_at'>>>
-      zones: Table<Zone, Pick<Zone, 'name'> & Partial<Pick<Zone, 'id' | 'created_by' | 'created_at'>>>
+      zones: Table<Zone, Pick<Zone, 'name' | 'color'> & Partial<Pick<Zone, 'id' | 'created_by' | 'created_at'>>>
       zone_members: Table<ZoneMembership, Pick<ZoneMembership, 'zone_id' | 'user_id'> & Partial<Pick<ZoneMembership, 'created_at'>>>
     }
     Views: Record<string, never>

@@ -590,8 +590,8 @@ html[data-theme='dark'] .loading-screen {
 }
 
 .nav-item.active {
-  color: #386b43;
-  background: #edf4eb;
+  color: var(--green-dark);
+  background: var(--green-soft);
   font-weight: 700;
 }
 
@@ -2410,6 +2410,37 @@ html[data-theme='dark'] .folder-create-form label {
   margin: 6px 0 0;
 }
 
+.zone-context,
+.event-zone-context {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #747d71;
+  font-size: 11px;
+}
+
+.zone-context {
+  margin: 9px 0 0;
+}
+
+.event-zone-context {
+  margin: 11px 0 0;
+}
+
+.zone-context > span,
+.event-zone-context > span {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 10px;
+  border: 1px solid rgb(32 39 31 / 14%);
+  border-radius: 50%;
+}
+
+.zone-context strong,
+.event-zone-context strong {
+  color: var(--green-dark);
+}
+
 .calendar-event-count {
   margin: 0 0 10px 2px;
 }
@@ -2556,7 +2587,7 @@ html[data-theme='dark'] .folder-create-form label {
 .group-create-form,
 .group-edit-row {
   display: grid;
-  grid-template-columns: minmax(130px, 1fr) minmax(180px, 2fr) auto;
+  grid-template-columns: minmax(110px, 0.8fr) minmax(160px, 1.5fr) minmax(100px, 0.7fr) 58px auto;
   align-items: center;
   gap: 10px;
   padding: 14px 19px;
@@ -2580,6 +2611,14 @@ html[data-theme='dark'] .folder-create-form label {
   color: #414940;
   background: #fff;
   font-size: 11px;
+}
+
+.group-create-form .group-color-picker,
+.group-edit-row .group-color-picker {
+  width: 58px;
+  min-height: 37px;
+  padding: 3px;
+  cursor: pointer;
 }
 
 .group-create-form .button,
@@ -3237,6 +3276,13 @@ html[data-theme='dark'] .folder-create-form label {
     font-size: 16px;
   }
 
+  .group-create-form .group-color-picker,
+  .group-edit-row .group-color-picker {
+    width: 64px;
+    min-height: 44px;
+    padding: 3px;
+  }
+
   .shopping-add-form {
     padding: 12px;
   }
@@ -3257,7 +3303,12 @@ html[data-theme='dark'] .folder-create-form label {
     grid-template-columns: 38px minmax(0, 1fr) auto 28px 29px;
     column-gap: 8px;
     row-gap: 5px;
-    padding: 8px 0;
+    margin-bottom: 7px;
+    padding: 10px 8px;
+    border: 1px solid #e8ece5;
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 1px 2px rgb(30 45 31 / 4%);
   }
 
   .shopping-item-image {
@@ -3704,8 +3755,8 @@ html[data-theme='dark'] .theme-toggle:hover {
 }
 
 html[data-theme='dark'] .nav-item.active {
-  color: #c4e0bd;
-  background-color: #2a3b2c;
+  color: color-mix(in srgb, var(--green) 55%, white);
+  background-color: color-mix(in srgb, var(--green) 23%, #1e261f);
 }
 
 html[data-theme='dark'] .theme-toggle {
@@ -3834,8 +3885,8 @@ html[data-theme='dark'] .category-label {
 
 html[data-theme='dark'] .group-badge {
   border-color: #405442;
-  color: #c4dfbd !important;
-  background-color: #2a3b2c;
+  color: var(--green-soft) !important;
+  background-color: color-mix(in srgb, var(--green) 20%, #1e261f);
 }
 
 html[data-theme='dark'] .quantity-number,
@@ -3859,6 +3910,16 @@ html[data-theme='dark'] .account-row,
 html[data-theme='dark'] .shopping-item,
 html[data-theme='dark'] .meal-card {
   border-color: #303a31;
+}
+
+html[data-theme='dark'] .shopping-item {
+  background: #202820;
+  box-shadow: none;
+}
+
+html[data-theme='dark'] .zone-context,
+html[data-theme='dark'] .event-zone-context {
+  color: #a5afa3;
 }
 
 html[data-theme='dark'] .member-group-options {

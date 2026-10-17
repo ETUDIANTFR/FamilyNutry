@@ -13,7 +13,7 @@ export type CalendarWidgetItem = {
 }
 
 type WidgetSyncPlugin = {
-  refresh(options: { shopping: string; calendar: string }): Promise<void>
+  refresh(options: { shopping: string; calendar: string; darkMode: boolean }): Promise<void>
 }
 
 const WidgetSync = registerPlugin<WidgetSyncPlugin>('WidgetSync')
@@ -21,11 +21,13 @@ const WidgetSync = registerPlugin<WidgetSyncPlugin>('WidgetSync')
 export async function refreshAndroidWidgets(
   shopping: ShoppingWidgetItem[],
   calendar: CalendarWidgetItem[],
+  darkMode: boolean,
 ) {
   if (!Capacitor.isNativePlatform()) return
 
   await WidgetSync.refresh({
     shopping: JSON.stringify(shopping),
     calendar: JSON.stringify(calendar),
+    darkMode,
   })
 }
