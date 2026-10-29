@@ -1972,6 +1972,31 @@ html[data-theme='dark'] .folder-create-form label {
   gap: 8px;
 }
 
+.receipt-product-item {
+  display: grid;
+  gap: 5px;
+}
+
+.receipt-trim-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.receipt-trim-actions button {
+  padding: 3px 7px;
+  border: 1px solid #dfe5da;
+  border-radius: 5px;
+  color: #596255;
+  background: #f7f9f4;
+  font: inherit;
+  font-size: 10px;
+}
+
+.receipt-trim-actions button:disabled {
+  opacity: 0.6;
+}
+
 .receipt-product-row label {
   display: grid;
   min-width: 0;
@@ -4076,6 +4101,12 @@ html[data-theme='dark'] .receipt-remove-button {
   border-color: #5a3936;
   color: #f2aaa3;
   background-color: #382624;
+}
+
+html[data-theme='dark'] .receipt-trim-actions button {
+  border-color: #465047;
+  color: #c4cec1;
+  background: #292f2a;
 }
 
 html[data-theme='dark'] input::placeholder,

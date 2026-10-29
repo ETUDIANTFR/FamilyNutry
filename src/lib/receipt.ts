@@ -4,20 +4,22 @@ export type ReceiptProduct = {
   quantity: number
 }
 
-const excludedReceiptLine = /\b(?:sous.?total|tota\w*|tva|rendu|monnaie|paiement|merci|fid[ée]lit[ée]|cb|esp[èe]ces|ht\b|ttc\b|remise|promo|carte|bancaire|ch[eè]que|document|ticket|caisse)\b/i
-
 function normalizeReceiptLine(line: string) {
   return line.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLocaleLowerCase('fr')
 }
 
 function cleanReceiptProductName(line: string) {
   return line
-    .replace(/^\s*[\d.,]+\s*[xX×]\s*/, '')
-    .replace(/\s*[xX×]\s*[\d.,]+\s*$/, '')
-    .replace(/\s+\d+[,.]\d{2}\s*(?:€|EUR)?\s*$/i, '')
-    .replace(/\s+\d+\.\d{2}\s*(?:€|EUR)?\s*$/i, '')
+    .replace(/^\s*(?:\d{1,2}|[a-z])\s*[x×]\s*/i, '')
+    .replace(/\d+(?:[.,]\d+)?/g, (number, offset: number, source: string) => {
+      const followingText = source.slice(offset + number.length)
+      return /^\s*(?:mg|kg|g|ml|cl|dl|l)\b/i.test(followingText) ? number : ''
+    })
+    .replace(/[€%]/g, '')
     .replace(/^[\s*•|:;._-]+|[\s*•|:;._-]+$/g, '')
     .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([.,])/g, '$1')
+    .replace(/[.,]+(?=\s|$)/g, '')
     .trim()
 }
 
@@ -26,24 +28,12 @@ function parseSingleReceiptText(text: string): Omit<ReceiptProduct, 'id'>[] {
 
   for (const sourceLine of text.split(/\r?\n/)) {
     const line = sourceLine.replace(/\s+/g, ' ').trim()
-    const normalizedLine = normalizeReceiptLine(line)
-    if (!line || excludedReceiptLine.test(normalizedLine) || /%|\(\s*\d+\s*\)/.test(line) || !/[a-zà-ÿ]/i.test(line)) continue
-
     const leadingQuantity = /^(\d{1,2})(?:[,.]0+)?\s*[xX×]\s*(.+)$/.exec(line)
     const noisyQuantityPrefix = /^(?:[a-z]{1,2}|\d{1,2})\s*[x×]\s*(.+)$/i.exec(line)
-    const body = leadingQuantity?.[2] ?? noisyQuantityPrefix?.[1] ?? line
-    const prices = [...body.matchAll(/(?:^|\s)(\d{1,5}[,.]\d{2})(?=\s|€|EUR|$)/gi)]
-    const lastPrice = prices[0]
-    const integerPrice = !lastPrice && noisyQuantityPrefix
-      ? /(?:^|\s)\d{3,5}(?:\s+\d{1,5})*\s*$/.exec(body)
-      : null
-    const priceIndex = lastPrice?.index ?? integerPrice?.index
-    if (priceIndex === undefined) continue
-
-    const name = cleanReceiptProductName(body.slice(0, priceIndex).trim())
+    const name = cleanReceiptProductName(leadingQuantity?.[2] ?? noisyQuantityPrefix?.[1] ?? line)
     if (name.length < 3 || name.length > 120 || !/[a-zà-ÿ]{2}/i.test(name)) continue
 
-    const key = name.toLocaleLowerCase('fr')
+    const key = normalizeReceiptLine(name).replace(/[^\p{L}\p{N}]+/gu, '')
     const existing = products.get(key)
     const quantity = leadingQuantity ? Number(leadingQuantity[1].replace(',', '.')) : 1
     products.set(key, { name, quantity: (existing?.quantity ?? 0) + (quantity > 0 ? quantity : 1) })
