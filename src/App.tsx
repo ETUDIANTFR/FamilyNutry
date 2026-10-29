@@ -7,7 +7,7 @@ import { supabase, isSupabaseConfigured } from './lib/supabase'
 import type { CalendarEvent, Meal, Product, Profile, ShoppingListItem, StorageFolder, Zone, ZoneMembership } from './lib/supabase'
 import { refreshAndroidWidgets } from './lib/androidWidgets'
 import type { CalendarEventMove } from './SharedCalendar'
-import { parseReceiptText } from './lib/receipt'
+import { parseReceiptText, prepareReceiptImage } from './lib/receipt'
 import type { ReceiptProduct } from './lib/receipt'
 import './App.css'
 
@@ -1311,10 +1311,11 @@ function App() {
         },
       })
       try {
-        const { data } = await worker.recognize(file)
+        const image = await prepareReceiptImage(file)
+        const { data } = await worker.recognize(image)
         const productsFound = parseReceiptText(data.text)
         if (productsFound.length === 0) {
-          throw new Error('Aucun produit n’a été détecté. Essayez une photo plus nette et bien cadrée.')
+          throw new Error('Aucun article avec un prix n’a été détecté. Cadrez les lignes des produits et réessayez.')
         }
         setReceiptProducts(productsFound.map((product) => ({ ...product, id: crypto.randomUUID() })))
         setReceiptProgress('')
