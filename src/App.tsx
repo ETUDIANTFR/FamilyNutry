@@ -1299,7 +1299,7 @@ function App() {
     setReceiptProgress('Préparation de la reconnaissance…')
     setReceiptProducts([])
     try {
-      const { createWorker } = await import('tesseract.js')
+      const { createWorker, PSM } = await import('tesseract.js')
       const worker = await createWorker('fra', 1, {
         logger: (message) => {
           if (message.status) {
@@ -1312,8 +1312,16 @@ function App() {
       })
       try {
         const image = await prepareReceiptImage(file)
-        const { data } = await worker.recognize(image)
-        const productsFound = parseReceiptText(data.text)
+        await worker.setParameters({
+          tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
+          preserve_interword_spaces: '1',
+          user_defined_dpi: '300',
+        })
+        const blockResult = await worker.recognize(image)
+        setReceiptProgress('Analyse complémentaire des lignes…')
+        await worker.setParameters({ tessedit_pageseg_mode: PSM.SPARSE_TEXT })
+        const sparseResult = await worker.recognize(image)
+        const productsFound = parseReceiptText([blockResult.data.text, sparseResult.data.text])
         if (productsFound.length === 0) {
           throw new Error('Aucun article avec un prix n’a été détecté. Cadrez les lignes des produits et réessayez.')
         }
