@@ -13,8 +13,10 @@
     "android:apk": "npm run android:sync && .\\android\\gradlew.bat -p android assembleDebug"
   },
   "dependencies": {
+    "@capacitor-mlkit/text-recognition": "^8.2.1",
     "@capacitor/android": "^8.5.3",
     "@capacitor/app": "^8.1.2",
+    "@capacitor/camera": "^8.2.6",
     "@capacitor/core": "^8.5.3",
     "@fullcalendar/daygrid": "^6.1.21",
     "@fullcalendar/interaction": "^6.1.21",

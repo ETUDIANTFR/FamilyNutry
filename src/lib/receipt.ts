@@ -28,10 +28,17 @@ function parseSingleReceiptText(text: string): Omit<ReceiptProduct, 'id'>[] {
 
   for (const sourceLine of text.split(/\r?\n/)) {
     const line = sourceLine.replace(/\s+/g, ' ').trim()
-    const leadingQuantity = /^(\d{1,2})(?:[,.]0+)?\s*[xX×]\s*(.+)$/.exec(line)
-    const noisyQuantityPrefix = /^(?:[a-z]{1,2}|\d{1,2})\s*[x×]\s*(.+)$/i.exec(line)
-    const name = cleanReceiptProductName(leadingQuantity?.[2] ?? noisyQuantityPrefix?.[1] ?? line)
-    if (name.length < 3 || name.length > 120 || !/[a-zà-ÿ]{2}/i.test(name)) continue
+    const normalizedLine = normalizeReceiptLine(line)
+    if (/\b(?:total|sous[\s-]?total|cb|tva)\b/.test(normalizedLine)) continue
+
+    const price = /(?<![\d.,])(?:\d{1,3}(?:[ .]\d{3})+|\d+)[,.]\d{2}\s*(?:€|eur)?(?:\s*[a-z*])?\s*$/i.exec(line)
+    if (!price) continue
+
+    const lineWithoutPrice = line.slice(0, price.index).trim()
+    const leadingQuantity = /^(\d{1,2})(?:[,.]0+)?\s*[xX×]\s*(.+)$/.exec(lineWithoutPrice)
+    const noisyQuantityPrefix = /^(?:[a-z]{1,2}|\d{1,2})\s*[x×]\s*(.+)$/i.exec(lineWithoutPrice)
+    const name = cleanReceiptProductName(leadingQuantity?.[2] ?? noisyQuantityPrefix?.[1] ?? lineWithoutPrice)
+    if (name.length < 3 || name.length > 120 || !/\p{L}{2}/iu.test(name)) continue
 
     const key = normalizeReceiptLine(name).replace(/[^\p{L}\p{N}]+/gu, '')
     const existing = products.get(key)

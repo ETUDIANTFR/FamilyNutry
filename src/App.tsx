@@ -1,6 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
+import { Camera, MediaTypeSelection } from '@capacitor/camera'
+import { Script, TextRecognition } from '@capacitor-mlkit/text-recognition'
 import type { Html5Qrcode } from 'html5-qrcode'
 import type { ChangeEvent, CSSProperties, DragEvent, FormEvent } from 'react'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
@@ -239,7 +241,8 @@ function App() {
   const [calendarEventAllDay, setCalendarEventAllDay] = useState(false)
   const [savingCalendarEvent, setSavingCalendarEvent] = useState(false)
   const [importingCalendar, setImportingCalendar] = useState(false)
-  const receiptFileInput = useRef<HTMLInputElement>(null)
+  const receiptCameraInput = useRef<HTMLInputElement>(null)
+  const receiptGalleryInput = useRef<HTMLInputElement>(null)
   const [widgetUrl, setWidgetUrl] = useState<string | null>(null)
   const reportWidgetError = useCallback((action: string, error: unknown) => {
     setNotice({ type: 'error', text: `${action} : ${error instanceof Error ? error.message : 'erreur native.'}` })
@@ -1285,6 +1288,15 @@ function App() {
     setImportingBulk(false)
   }
 
+  function showReceiptProducts(text: string) {
+    const productsFound = parseReceiptText(text)
+    if (productsFound.length === 0) {
+      throw new Error('Aucun article avec un prix n’a été détecté. Cadrez les lignes des produits et réessayez.')
+    }
+    setReceiptProducts(productsFound.map((product) => ({ ...product, id: crypto.randomUUID() })))
+    setReceiptProgress('')
+  }
+
   async function scanReceipt(event: ChangeEvent<HTMLInputElement>) {
     const file = event.currentTarget.files?.[0]
     event.currentTarget.value = ''
@@ -1321,15 +1333,44 @@ function App() {
         setReceiptProgress('Analyse complémentaire des lignes…')
         await worker.setParameters({ tessedit_pageseg_mode: PSM.SPARSE_TEXT })
         const sparseResult = await worker.recognize(image)
-        const productsFound = parseReceiptText([blockResult.data.text, sparseResult.data.text])
-        if (productsFound.length === 0) {
-          throw new Error('Aucun article avec un prix n’a été détecté. Cadrez les lignes des produits et réessayez.')
-        }
-        setReceiptProducts(productsFound.map((product) => ({ ...product, id: crypto.randomUUID() })))
-        setReceiptProgress('')
+        showReceiptProducts(`${blockResult.data.text}\n${sparseResult.data.text}`)
       } finally {
         await worker.terminate()
       }
+    } catch (error) {
+      setReceiptError(error instanceof Error ? error.message : 'La lecture du ticket a échoué.')
+      setReceiptProgress('')
+    } finally {
+      setReceiptScanning(false)
+    }
+  }
+
+  async function scanReceiptFromDevice(source: 'camera' | 'gallery') {
+    if (!Capacitor.isNativePlatform()) {
+      const input = source === 'camera' ? receiptCameraInput.current : receiptGalleryInput.current
+      input?.click()
+      return
+    }
+
+    setReceiptScanning(true)
+    setReceiptError('')
+    setReceiptProgress(source === 'camera' ? 'Ouverture de l’appareil photo…' : 'Ouverture de la galerie…')
+    setReceiptProducts([])
+    try {
+      const image = source === 'camera'
+        ? await Camera.takePhoto({ quality: 90, correctOrientation: true, targetWidth: 2400, targetHeight: 3200 })
+        : (await Camera.chooseFromGallery({
+          mediaType: MediaTypeSelection.Photo,
+          quality: 90,
+          targetWidth: 2400,
+          targetHeight: 3200,
+        })).results[0]
+      if (!image?.uri) throw new Error('Aucune image n’a été sélectionnée.')
+
+      setReceiptProgress('Lecture locale du ticket…')
+      const result = await TextRecognition.processImage({ path: image.uri, script: Script.Latin })
+      const recognizedLines = result.blocks.flatMap((block) => block.lines.map((line) => line.text)).join('\n')
+      showReceiptProducts(recognizedLines || result.text)
     } catch (error) {
       setReceiptError(error instanceof Error ? error.message : 'La lecture du ticket a échoué.')
       setReceiptProgress('')
@@ -2696,10 +2737,16 @@ function App() {
             <span className="eyebrow">MISE À JOUR DU STOCK</span>
             <h2 id="receipt-title">Lire un ticket de caisse</h2>
             <p className="modal-description">Prenez une photo ou choisissez une image. Les produits sont reconnus sur cet appareil, puis vous pourrez vérifier leurs noms et quantités avant de les ajouter au stock.</p>
-            <button className="button button-primary button-wide receipt-photo-button" type="button" onClick={() => receiptFileInput.current?.click()} disabled={receiptScanning || savingReceipt}>
-              ▧ {receiptScanning ? 'Lecture en cours…' : 'Prendre une photo / choisir une image'}<span>↗</span>
-            </button>
-            <input ref={receiptFileInput} className="receipt-file-input" type="file" accept="image/*" capture="environment" onChange={(event) => void scanReceipt(event)} disabled={receiptScanning || savingReceipt} />
+            <div className="receipt-source-actions">
+              <button className="button button-primary receipt-photo-button" type="button" onClick={() => void scanReceiptFromDevice('camera')} disabled={receiptScanning || savingReceipt}>
+                {receiptScanning ? 'Lecture en cours…' : 'Prendre une photo'}<span>↗</span>
+              </button>
+              <button className="button button-secondary receipt-photo-button" type="button" onClick={() => void scanReceiptFromDevice('gallery')} disabled={receiptScanning || savingReceipt}>
+                Choisir dans la galerie<span>↗</span>
+              </button>
+            </div>
+            <input ref={receiptCameraInput} className="receipt-file-input" type="file" accept="image/*" capture="environment" onChange={(event) => void scanReceipt(event)} disabled={receiptScanning || savingReceipt} />
+            <input ref={receiptGalleryInput} className="receipt-file-input" type="file" accept="image/*" onChange={(event) => void scanReceipt(event)} disabled={receiptScanning || savingReceipt} />
             {receiptProgress && <p className="receipt-progress" role="status">{receiptProgress}</p>}
             {receiptError && <p className="receipt-error" role="alert">{receiptError}</p>}
             {receiptProducts.length > 0 && (
